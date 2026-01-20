@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 var (
@@ -23,7 +21,7 @@ func main() {
 	// Custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "CCV - Claude Code Viewer\n\n")
-		fmt.Fprintf(os.Stderr, "A lightweight TUI wrapper for Claude Code that renders beautiful output.\n\n")
+		fmt.Fprintf(os.Stderr, "A headless CLI wrapper for Claude Code that outputs structured text.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  ccv [flags] [prompt]\n")
 		fmt.Fprintf(os.Stderr, "  ccv [flags] -- [claude args...]\n\n")
@@ -75,20 +73,6 @@ func main() {
 
 	if err := runner.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting Claude: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Create and start the Bubble Tea program
-	model := NewModel(runner)
-	p := tea.NewProgram(
-		model,
-		tea.WithAltScreen(),       // Use alternate screen buffer
-		tea.WithMouseCellMotion(), // Enable mouse support
-	)
-
-	// Run the program
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
 
