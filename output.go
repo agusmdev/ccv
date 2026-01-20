@@ -282,9 +282,10 @@ type toolResultHandler func(p *OutputProcessor, toolCall *ToolCall, block *Conte
 
 // toolResultHandlers maps tool names to their result handlers
 var toolResultHandlers = map[string]toolResultHandler{
-	"Bash": handleBashResult,
-	"Glob": handleGlobResult,
-	"Grep": handleGrepResult,
+	"Bash":      handleBashResult,
+	"Glob":      handleGlobResult,
+	"Grep":      handleGrepResult,
+	"WebSearch": handleWebSearchResult,
 }
 
 // processToolResult processes a tool result
@@ -397,6 +398,27 @@ func handleGrepResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBloc
 		}
 	} else if !block.IsError {
 		fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
+	}
+
+	if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
+	}
+}
+
+// handleWebSearchResult handles WebSearch tool results - show search results summary
+func handleWebSearchResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.Content != "" {
+		lines := strings.Split(block.Content, "\n")
+		for _, line := range lines {
+			// Skip empty lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			fmt.Fprintf(p.writer, "  %s\n", line)
+		}
+	} else if !block.IsError {
+		fmt.Fprintf(p.writer, "  %s(no results)%s\n", c.LabelDim, c.Reset)
 	}
 
 	if block.IsError {
@@ -641,6 +663,44 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 				for _, line := range lines {
 					fmt.Fprintf(p.writer, "    %s\n", line)
 				}
+			}
+		}
+		return
+	}
+
+	// Handle WebSearch tool specially - display query and filters
+	if toolCall.Name == "WebSearch" {
+		query, hasQuery := inputMap["query"].(string)
+
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset)
+
+		if hasQuery {
+			fmt.Fprintf(p.writer, "  %sQuery:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, query, c.Reset)
+		}
+
+		// Show allowed domains if present
+		if allowedDomains, ok := inputMap["allowed_domains"].([]interface{}); ok && len(allowedDomains) > 0 {
+			domains := make([]string, 0, len(allowedDomains))
+			for _, d := range allowedDomains {
+				if domain, ok := d.(string); ok {
+					domains = append(domains, domain)
+				}
+			}
+			if len(domains) > 0 {
+				fmt.Fprintf(p.writer, "  %sAllowed:%s %s\n", c.LabelDim, c.Reset, strings.Join(domains, ", "))
+			}
+		}
+
+		// Show blocked domains if present
+		if blockedDomains, ok := inputMap["blocked_domains"].([]interface{}); ok && len(blockedDomains) > 0 {
+			domains := make([]string, 0, len(blockedDomains))
+			for _, d := range blockedDomains {
+				if domain, ok := d.(string); ok {
+					domains = append(domains, domain)
+				}
+			}
+			if len(domains) > 0 {
+				fmt.Fprintf(p.writer, "  %sBlocked:%s %s\n", c.LabelDim, c.Reset, strings.Join(domains, ", "))
 			}
 		}
 		return
