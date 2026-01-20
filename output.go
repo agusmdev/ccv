@@ -597,6 +597,55 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle WebFetch tool specially - display URL and prompt in readable format
+	if toolCall.Name == "WebFetch" {
+		url, hasURL := inputMap["url"].(string)
+		prompt, hasPrompt := inputMap["prompt"].(string)
+
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset)
+
+		if hasURL {
+			fmt.Fprintf(p.writer, "  %sURL:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, url, c.Reset)
+		}
+
+		if hasPrompt {
+			// Truncate prompt if too long (show first 120 chars)
+			displayPrompt := prompt
+			if len(prompt) > 120 {
+				displayPrompt = prompt[:117] + "..."
+			}
+			fmt.Fprintf(p.writer, "  %sPrompt:%s %s\n", c.LabelDim, c.Reset, displayPrompt)
+
+			// In verbose mode, show full prompt if it was truncated
+			if p.mode == OutputModeVerbose && len(prompt) > 120 {
+				// Wrap long prompts to 80 chars per line
+				words := strings.Fields(prompt)
+				var lines []string
+				var currentLine strings.Builder
+
+				for _, word := range words {
+					if currentLine.Len() > 0 && currentLine.Len()+len(word)+1 > 80 {
+						lines = append(lines, currentLine.String())
+						currentLine.Reset()
+					}
+					if currentLine.Len() > 0 {
+						currentLine.WriteString(" ")
+					}
+					currentLine.WriteString(word)
+				}
+				if currentLine.Len() > 0 {
+					lines = append(lines, currentLine.String())
+				}
+
+				fmt.Fprintf(p.writer, "  %sFull prompt:%s\n", c.LabelDim, c.Reset)
+				for _, line := range lines {
+					fmt.Fprintf(p.writer, "    %s\n", line)
+				}
+			}
+		}
+		return
+	}
+
 	// Handle TodoWrite tool specially - display todos in a prettified list format
 	if toolCall.Name == "TodoWrite" {
 		if todosRaw, ok := inputMap["todos"].([]interface{}); ok {
