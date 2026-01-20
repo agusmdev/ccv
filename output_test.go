@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -1685,4 +1686,844 @@ func TestProcessToolResult_TaskResultSwitchesParent(t *testing.T) {
 	if child.Status != AgentStatusCompleted {
 		t.Errorf("expected child status 'completed', got '%s'", child.Status)
 	}
+}
+
+// TestProcessMessages_ErrorChannelDoesNotStopProcessing tests that errors on the error channel don't stop message processing
+func TestProcessMessages_ErrorChannelDoesNotStopProcessing(t *testing.T) {
+	messages := make(chan interface{}, 10)
+	errors := make(chan error, 10)
+
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	// Send an error followed by a valid message
+	errors <- fmt.Errorf("test error")
+	messages <- createTestSystemInit("test", "model")
+
+	close(messages)
+	close(errors)
+
+	// Should process both the error and the message without stopping
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("ProcessMessages panicked with error channel: %v", r)
+		}
+	}()
+
+	p.ProcessMessages(messages, errors)
+}
+
+// TestProcessMessages_MessagesChannelCloseTriggersFinalSummary tests that closing messages channel triggers printFinalSummary
+func TestProcessMessages_MessagesChannelCloseTriggersFinalSummary(t *testing.T) {
+	messages := make(chan interface{}, 10)
+	errors := make(chan error, 10)
+
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	// Set up result to verify summary is printed
+	p.result = createTestResult(0.01, 5000, 2)
+	p.state.TotalTokens = &TotalUsage{
+		InputTokens:  1000,
+		OutputTokens: 500,
+	}
+
+	close(messages)
+	close(errors)
+
+	p.ProcessMessages(messages, errors)
+
+	output := w.String()
+	if !strings.Contains(output, "Tokens:") {
+		t.Error("expected final summary to be printed when messages channel closes")
+	}
+}
+
+// TestProcessMessage_JSONMode_MarshalError tests JSON mode handles marshal errors gracefully
+func TestProcessMessage_JSONMode_MarshalError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeJSON)
+
+	// Create a message that can't be marshaled (contains a channel)
+	type BadMessage struct {
+		Type    string
+		Channel chan int
+	}
+	msg := &BadMessage{
+		Type:    "bad",
+		Channel: make(chan int),
+	}
+
+	// Should not panic, just log error to stderr
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("processMessage panicked on unmarshalable type: %v", r)
+		}
+	}()
+
+	p.processMessage(msg)
+}
+
+// TestHandleContentBlockStart_CreatesToolCall tests content_block_start creates tool call
+func TestHandleContentBlockStart_CreatesToolCall(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	toolID := "tool_123"
+	block := &ContentBlock{
+		Type:  ContentBlockTypeToolUse,
+		ID:    toolID,
+		Name:  "Read",
+		Input: json.RawMessage(`{"file_path": "/path/to/file.go"}`),
+	}
+
+	event := createTestStreamEvent(StreamEventContentBlockStart, nil, block)
+	p.handleContentBlockStart(event)
+
+	// Tool call should be in pending tools
+	toolCall, ok := p.state.PendingTools[toolID]
+	if !ok {
+		t.Fatal("expected tool call to be created")
+	}
+	if toolCall.Name != "Read" {
+		t.Errorf("expected tool name 'Read', got '%s'", toolCall.Name)
+	}
+	if toolCall.Status != ToolCallStatusPending {
+		t.Errorf("expected status 'pending', got '%s'", toolCall.Status)
+	}
+}
+
+// TestHandleContentBlockStart_NilContentBlock tests content_block_start with nil ContentBlock
+func TestHandleContentBlockStart_NilContentBlock(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	event := createTestStreamEvent(StreamEventContentBlockStart, nil, nil)
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleContentBlockStart with nil ContentBlock panicked: %v", r)
+		}
+	}()
+
+	p.handleContentBlockStart(event)
+}
+
+// TestHandleContentBlockDelta_NilDelta tests content_block_delta with nil delta
+func TestHandleContentBlockDelta_NilDelta(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	event := createTestStreamEvent(StreamEventContentBlockDelta, nil, nil)
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleContentBlockDelta with nil delta panicked: %v", r)
+		}
+	}()
+
+	p.handleContentBlockDelta(event)
+}
+
+// TestHandleWebSearchResult_WithResults tests WebSearch result handler with results
+func TestHandleWebSearchResult_WithResults(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("web_1", "WebSearch", map[string]interface{}{
+		"query": "golang testing",
+	})
+	block := createTestToolResultBlock("web_1", "result1\nresult2\nresult3", false)
+
+	handleWebSearchResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "result1") {
+		t.Errorf("expected result1 in output, got: %q", output)
+	}
+	if !strings.Contains(output, "result2") {
+		t.Errorf("expected result2 in output, got: %q", output)
+	}
+}
+
+// TestHandleWebSearchResult_EmptyResults tests WebSearch result handler with empty results
+func TestHandleWebSearchResult_EmptyResults(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("web_2", "WebSearch", map[string]interface{}{})
+	block := createTestToolResultBlock("web_2", "", false)
+
+	handleWebSearchResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "(no results)") {
+		t.Errorf("expected '(no results)' message, got: %q", output)
+	}
+}
+
+// TestHandleWebSearchResult_WithError tests WebSearch result handler with error
+func TestHandleWebSearchResult_WithError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("web_3", "WebSearch", map[string]interface{}{})
+	block := createTestToolResultBlock("web_3", "some error content", true)
+
+	handleWebSearchResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Search failed") {
+		t.Errorf("expected 'Search failed' message, got: %q", output)
+	}
+}
+
+// TestHandleKillShellResult_Success tests KillShell result handler success case
+func TestHandleKillShellResult_Success(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("kill_1", "KillShell", map[string]interface{}{
+		"shell_id": "shell_123",
+	})
+	block := createTestToolResultBlock("kill_1", "", false)
+
+	handleKillShellResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✓") {
+		t.Errorf("expected success indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Shell terminated") {
+		t.Errorf("expected 'Shell terminated' message, got: %q", output)
+	}
+}
+
+// TestHandleKillShellResult_Failure tests KillShell result handler failure case
+func TestHandleKillShellResult_Failure(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("kill_2", "KillShell", map[string]interface{}{
+		"shell_id": "shell_456",
+	})
+	block := createTestToolResultBlock("kill_2", "shell not found", true)
+
+	handleKillShellResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "failed") {
+		t.Errorf("expected 'failed' message, got: %q", output)
+	}
+}
+
+// TestHandleKillShellResult_VerboseMode tests KillShell result in verbose mode
+func TestHandleKillShellResult_VerboseMode(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("kill_3", "KillShell", map[string]interface{}{
+		"shell_id": "shell_789",
+	})
+	block := createTestToolResultBlock("kill_3", "Terminated shell shell_789\nExit code: 0", false)
+
+	handleKillShellResult(p, toolCall, block)
+
+	output := w.String()
+	// In verbose mode, should show the content
+	if !strings.Contains(output, "Terminated shell") {
+		t.Errorf("expected verbose output content, got: %q", output)
+	}
+}
+
+// TestHandleTaskOutputResult_WithContent tests TaskOutput result handler with content
+func TestHandleTaskOutputResult_WithContent(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("task_out_1", "TaskOutput", map[string]interface{}{
+		"task_id": "task_123",
+	})
+	block := createTestToolResultBlock("task_out_1", "line1\nline2\nline3", false)
+
+	handleTaskOutputResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "line1") {
+		t.Errorf("expected line1 in output, got: %q", output)
+	}
+	if !strings.Contains(output, "line2") {
+		t.Errorf("expected line2 in output, got: %q", output)
+	}
+}
+
+// TestHandleTaskOutputResult_WithError tests TaskOutput result handler with error
+func TestHandleTaskOutputResult_WithError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("task_out_2", "TaskOutput", map[string]interface{}{
+		"task_id": "task_456",
+	})
+	block := createTestToolResultBlock("task_out_2", "", true)
+
+	handleTaskOutputResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Failed to retrieve") {
+		t.Errorf("expected error message, got: %q", output)
+	}
+}
+
+// TestHandleTaskOutputResult_EmptyContent tests TaskOutput result handler with empty content
+func TestHandleTaskOutputResult_EmptyContent(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("task_out_3", "TaskOutput", map[string]interface{}{
+		"task_id": "task_789",
+	})
+	block := createTestToolResultBlock("task_out_3", "", false)
+
+	handleTaskOutputResult(p, toolCall, block)
+
+	output := w.String()
+	// Empty content without error should be silent
+	if strings.Contains(output, "✗") {
+		t.Errorf("empty non-error should be silent, got: %q", output)
+	}
+}
+
+// TestHandleGrepResult_WithError tests Grep result handler with error
+func TestHandleGrepResult_WithError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("grep_err", "Grep", map[string]interface{}{
+		"pattern": "test",
+	})
+	block := createTestToolResultBlock("grep_err", "permission denied", true)
+
+	handleGrepResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Search failed") {
+		t.Errorf("expected 'Search failed' message, got: %q", output)
+	}
+}
+
+// TestHandleGrepResult_NoMatches tests Grep result handler with no matches
+func TestHandleGrepResult_NoMatches(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("grep_empty", "Grep", map[string]interface{}{
+		"pattern": "nonexistent",
+	})
+	block := createTestToolResultBlock("grep_empty", "", false)
+
+	handleGrepResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "(no matches)") {
+		t.Errorf("expected '(no matches)' message, got: %q", output)
+	}
+}
+
+// TestHandleGlobResult_WithError tests Glob result handler with error
+func TestHandleGlobResult_WithError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("glob_err", "Glob", map[string]interface{}{
+		"pattern": "**/*.go",
+	})
+	block := createTestToolResultBlock("glob_err", "invalid pattern", true)
+
+	handleGlobResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Search failed") {
+		t.Errorf("expected 'Search failed' message, got: %q", output)
+	}
+}
+
+// TestHandleBashResult_VerboseMode tests Bash result handler in verbose mode
+func TestHandleBashResult_VerboseMode(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("bash_v", "Bash", map[string]interface{}{
+		"command": "ls -la",
+		"description": "List files",
+	})
+	block := createTestToolResultBlock("bash_v", "file1.txt\nfile2.txt\nfile3.txt", false)
+
+	handleBashResult(p, toolCall, block)
+
+	output := w.String()
+	// Should show all lines
+	if !strings.Contains(output, "file1.txt") {
+		t.Errorf("expected file1.txt in output, got: %q", output)
+	}
+	// Each line should be indented
+	if !strings.Contains(output, "  file1.txt") {
+		t.Errorf("expected indented output, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_MultiEdit tests MultiEdit tool formatting
+func TestPrintToolCall_MultiEdit(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("multi_1", "MultiEdit", map[string]interface{}{
+		"file_path": "/path/to/file.go",
+		"edits": []interface{}{
+			map[string]interface{}{
+				"old_string": "old1",
+				"new_string": "new1",
+			},
+			map[string]interface{}{
+				"old_string": "old2",
+				"new_string": "new2",
+			},
+		},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "MultiEdit") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "/path/to/file.go") {
+		t.Errorf("expected file path, got: %q", output)
+	}
+	// Should show diffs for each edit
+	if !strings.Contains(output, "- old1") {
+		t.Errorf("expected first diff removal, got: %q", output)
+	}
+	if !strings.Contains(output, "+ new1") {
+		t.Errorf("expected first diff addition, got: %q", output)
+	}
+	if !strings.Contains(output, "- old2") {
+		t.Errorf("expected second diff removal, got: %q", output)
+	}
+	if !strings.Contains(output, "+ new2") {
+		t.Errorf("expected second diff addition, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_MultiEdit_SingleEdit tests MultiEdit with a single edit
+func TestPrintToolCall_MultiEdit_SingleEdit(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("multi_2", "MultiEdit", map[string]interface{}{
+		"file_path": "/path/to/file.go",
+		"edits": []interface{}{
+			map[string]interface{}{
+				"old_string": "old",
+				"new_string": "new",
+			},
+		},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "- old") {
+		t.Errorf("expected diff removal, got: %q", output)
+	}
+	// Should NOT have separator for single edit
+	if strings.Contains(output, "---") {
+		t.Errorf("should not have edit separator for single edit, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightNavigate tests Playwright navigate tool
+func TestPrintToolCall_PlaywrightNavigate(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("nav_1", "navigate", map[string]interface{}{
+		"url": "https://example.com",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "navigate") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "https://example.com") {
+		t.Errorf("expected URL, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightNavigate_WithTimeout tests Playwright navigate with timeout
+func TestPrintToolCall_PlaywrightNavigate_WithTimeout(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("nav_2", "navigate", map[string]interface{}{
+		"url":     "https://example.com",
+		"timeout": float64(30000),
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "30000ms") {
+		t.Errorf("expected timeout in verbose mode, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightClick tests Playwright click tool
+func TestPrintToolCall_PlaywrightClick(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("click_1", "click", map[string]interface{}{
+		"selector": "button#submit",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "click") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "button#submit") {
+		t.Errorf("expected selector, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightType tests Playwright type tool
+func TestPrintToolCall_PlaywrightType(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("type_1", "type", map[string]interface{}{
+		"selector": "input#name",
+		"text":     "hello world",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "type") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "input#name") {
+		t.Errorf("expected element selector, got: %q", output)
+	}
+	if !strings.Contains(output, "hello world") {
+		t.Errorf("expected text, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightType_LongText tests Playwright type with long text truncation
+func TestPrintToolCall_PlaywrightType_LongText(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	longText := strings.Repeat("word ", 30) // 180 chars
+	toolCall := createTestToolCall("type_2", "type", map[string]interface{}{
+		"selector": "textarea",
+		"text":     longText,
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should truncate long text
+	if !strings.Contains(output, "...") {
+		t.Errorf("expected truncated text with '...', got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightFill tests Playwright fill tool
+func TestPrintToolCall_PlaywrightFill(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("fill_1", "fill", map[string]interface{}{
+		"selector": "input#email",
+		"text":     "test@example.com",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "fill") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "input#email") {
+		t.Errorf("expected element selector, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightScreenshot tests Playwright screenshot tool
+func TestPrintToolCall_PlaywrightScreenshot(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("shot_1", "screenshot", map[string]interface{}{
+		"path": "/path/to/screenshot.png",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "screenshot") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "/path/to/screenshot.png") {
+		t.Errorf("expected file path, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightScreenshot_Verbose tests screenshot in verbose mode with type
+func TestPrintToolCall_PlaywrightScreenshot_Verbose(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("shot_2", "screenshot", map[string]interface{}{
+		"path": "/path/to/screenshot.png",
+		"type": "jpeg",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "jpeg") {
+		t.Errorf("expected screenshot type in verbose mode, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightSnapshot tests Playwright snapshot tool
+func TestPrintToolCall_PlaywrightSnapshot(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("snap_1", "snapshot", map[string]interface{}{})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "snapshot") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_PlaywrightSnapshot_Verbose tests snapshot in verbose mode
+func TestPrintToolCall_PlaywrightSnapshot_Verbose(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("snap_2", "snapshot", map[string]interface{}{})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "Capturing page state") {
+		t.Errorf("expected verbose message in verbose mode, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_MCPNavigate tests MCP-style navigate tool
+func TestPrintToolCall_MCPNavigate(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("nav_3", "mcp__browser__navigate", map[string]interface{}{
+		"url": "https://example.com/page",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show shortened MCP tool name
+	if !strings.Contains(output, "browser:navigate") {
+		t.Errorf("expected shortened tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "https://example.com/page") {
+		t.Errorf("expected URL, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_MCPScreenshot tests MCP-style screenshot tool
+func TestPrintToolCall_MCPScreenshot(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("shot_3", "mcp__browser__screenshot", map[string]interface{}{
+		"path": "/tmp/screenshot.png",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show shortened MCP tool name
+	if !strings.Contains(output, "browser:screenshot") {
+		t.Errorf("expected shortened tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "/tmp/screenshot.png") {
+		t.Errorf("expected file path, got: %q", output)
+	}
+}
+
+// TestProcessToolResult_UnknownTool tests tool result for unknown tool type
+func TestProcessToolResult_UnknownTool(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	toolCall := createTestToolCall("unknown", "UnknownTool", map[string]interface{}{
+		"param": "value",
+	})
+	p.state.AddOrUpdateToolCall(toolCall)
+	w.Reset()
+
+	block := createTestToolResultBlock("unknown", "completed successfully", false)
+	p.processToolResult(block)
+
+	output := w.String()
+	// Should use default handler
+	if !strings.Contains(output, "UnknownTool") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "✓") {
+		t.Errorf("expected success indicator, got: %q", output)
+	}
+}
+
+// TestProcessContentBlock_InvalidJSONInToolInput tests tool_use with invalid JSON input
+func TestProcessContentBlock_InvalidJSONInToolInput(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	toolCall := createTestToolCall("tool_bad", "Bash", nil)
+	p.state.AddOrUpdateToolCall(toolCall)
+
+	block := &ContentBlock{
+		Type:  ContentBlockTypeToolUse,
+		ID:    "tool_bad",
+		Name:  "Bash",
+		Input: json.RawMessage(`{invalid json}`),
+	}
+
+	// Should not panic with invalid JSON
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("processContentBlock with invalid JSON panicked: %v", r)
+		}
+	}()
+
+	p.processContentBlock(block)
+}
+
+// TestProcessContentBlock_NilContentBlockFields tests content block with nil fields
+func TestProcessContentBlock_NilContentBlockFields(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	// Create blocks with various nil field combinations
+	tests := []struct {
+		name string
+		block *ContentBlock
+	}{
+		{
+			name: "nil text field",
+			block: &ContentBlock{
+				Type: ContentBlockTypeText,
+				Text: "",
+			},
+		},
+		{
+			name: "nil thinking field",
+			block: &ContentBlock{
+				Type:     ContentBlockTypeThinking,
+				Thinking: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("processContentBlock with nil field panicked: %v", r)
+				}
+			}()
+			p.processContentBlock(tt.block)
+		})
+	}
+}
+
+// TestProcessMessage_AssistantMessageWithNilUsage tests assistant message with nil usage
+func TestProcessMessage_AssistantMessageWithNilUsage(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	msg := &AssistantMessage{
+		Type: "assistant",
+		Message: MessageContent{
+			ID:      "msg_test",
+			Type:    "message",
+			Role:    "assistant",
+			Content: []ContentBlock{},
+			Usage:   nil,
+		},
+	}
+
+	// Should not panic with nil usage
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("processMessage with nil usage panicked: %v", r)
+		}
+	}()
+
+	p.processMessage(msg)
+}
+
+// TestHandleAssistantMessage_WithUsage tests assistant message updates token usage
+func TestHandleAssistantMessage_WithUsage(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	msg := &AssistantMessage{
+		Type: "assistant",
+		Message: MessageContent{
+			ID:      "msg_test",
+			Type:    "message",
+			Role:    "assistant",
+			Content: []ContentBlock{},
+			Usage: &Usage{
+				InputTokens:  1000,
+				OutputTokens: 500,
+			},
+		},
+	}
+
+	p.handleAssistantMessage(msg)
+
+	if p.state.TotalTokens.InputTokens != 1000 {
+		t.Errorf("expected input tokens 1000, got %d", p.state.TotalTokens.InputTokens)
+	}
+	if p.state.TotalTokens.OutputTokens != 500 {
+		t.Errorf("expected output tokens 500, got %d", p.state.TotalTokens.OutputTokens)
+	}
+}
+
+// TestHandleStreamEvent_NilContentBlockInDelta tests content_block_delta with nil ContentBlock
+func TestHandleStreamEvent_ContentBlockDelta_NilContentBlock(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	// Event with delta but nil content block - shouldn't crash
+	event := &StreamEvent{
+		Type:  StreamEventContentBlockDelta,
+		Delta: &Delta{
+			Type: string(DeltaTypeInputJSONDelta),
+			PartialJSON: `{"test":`,
+		},
+		ContentBlock: nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleContentBlockDelta with nil ContentBlock panicked: %v", r)
+		}
+	}()
+
+	p.handleContentBlockDelta(event)
 }
