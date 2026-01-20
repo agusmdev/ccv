@@ -182,3 +182,33 @@ func IndentLines(s string, indent string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// FormatMCPToolName shortens MCP tool names from the format
+// mcp__plugin_foo_bar__baz to plugin:foo:bar:baz.
+// The mcp__ prefix is stripped, the double underscore separator
+// becomes a colon, and underscores in the plugin part become colons.
+func FormatMCPToolName(name string) string {
+	// MCP tools have the format: mcp__<plugin>__<tool_name>
+	const mcpPrefix = "mcp__"
+	if !strings.HasPrefix(name, mcpPrefix) {
+		return name
+	}
+
+	// Remove mcp__ prefix
+	remaining := name[len(mcpPrefix):]
+
+	// Find the __ separator between plugin and tool name
+	sepIdx := strings.Index(remaining, "__")
+	if sepIdx == -1 {
+		// Malformed MCP name, return original
+		return name
+	}
+
+	plugin := remaining[:sepIdx]
+	toolName := remaining[sepIdx+2:] // +2 to skip the "__"
+
+	// Convert underscores in plugin part to colons for hierarchical naming
+	plugin = strings.ReplaceAll(plugin, "_", ":")
+
+	return plugin + ":" + toolName
+}

@@ -522,6 +522,9 @@ func (p *OutputProcessor) printDiff(oldStr, newStr string) {
 func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	c := p.colors
 
+	// Format tool name - shorten MCP tool names
+	displayName := FormatMCPToolName(toolCall.Name)
+
 	// Parse input to extract parameters
 	var inputMap map[string]interface{}
 	if len(toolCall.Input) > 0 {
@@ -1044,9 +1047,9 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	statusStr := string(toolCall.Status)
 
 	if description != "" {
-		fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, description, c.ToolStatus, statusStr, c.Reset)
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset, description, c.ToolStatus, statusStr, c.Reset)
 	} else {
-		fmt.Fprintf(p.writer, "%s→%s %s%s%s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.ToolStatus, statusStr, c.Reset)
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset, c.ToolStatus, statusStr, c.Reset)
 	}
 
 	// Show full input in verbose mode
