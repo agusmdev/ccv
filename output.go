@@ -157,9 +157,8 @@ func (p *OutputProcessor) handleContentBlockStart(event *StreamEvent) {
 		}
 		p.state.AddOrUpdateToolCall(toolCall)
 
-		if p.mode != OutputModeQuiet {
-			p.printToolCall(toolCall)
-		}
+		// Don't print yet - input may be incomplete during streaming
+		// Will print when complete message arrives in processContentBlock
 	}
 }
 
@@ -213,7 +212,14 @@ func (p *OutputProcessor) processContentBlock(block *ContentBlock) {
 		}
 
 	case ContentBlockTypeToolUse:
-		// Tool use already printed during streaming
+		// Print tool use now that we have complete input
+		if p.mode != OutputModeQuiet {
+			// Update the tool call with complete input
+			if tc, ok := p.state.PendingTools[block.ID]; ok {
+				tc.Input = block.Input
+				p.printToolCall(tc)
+			}
+		}
 
 	case ContentBlockTypeToolResult:
 		p.processToolResult(block)
@@ -234,6 +240,25 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 		return
 	}
 
+	// Handle Bash tool results specially - always show output
+	if toolCall.Name == "Bash" {
+		if block.Content != "" {
+			// Indent and display output, preserving ANSI colors
+			lines := strings.Split(block.Content, "\n")
+			for _, line := range lines {
+				// Show all lines, even empty ones, to preserve output structure
+				fmt.Fprintf(p.writer, "  %s\n", line)
+			}
+		}
+
+		// Show error indicator if it failed
+		if block.IsError {
+			fmt.Fprintf(p.writer, "  ✗ Command failed\n")
+		}
+		return
+	}
+
+	// Default handling for other tools
 	status := "✓"
 	if block.IsError {
 		status = "✗"
@@ -255,15 +280,32 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 
 // printToolCall prints a tool call
 func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
-	// Extract description from input if available
-	description := ""
+	// Parse input to extract parameters
+	var inputMap map[string]interface{}
 	if len(toolCall.Input) > 0 {
-		var inputMap map[string]interface{}
-		if err := json.Unmarshal(toolCall.Input, &inputMap); err == nil {
-			if desc, ok := inputMap["description"].(string); ok {
-				description = desc
+		json.Unmarshal(toolCall.Input, &inputMap)
+	}
+
+	// Handle Bash tool specially
+	if toolCall.Name == "Bash" {
+		if command, ok := inputMap["command"].(string); ok {
+			// Show command as the primary info
+			fmt.Fprintf(p.writer, "→ Bash: %s\n", command)
+
+			// In verbose mode, also show description if available
+			if p.mode == OutputModeVerbose {
+				if desc, ok := inputMap["description"].(string); ok && desc != "" {
+					fmt.Fprintf(p.writer, "  Description: %s\n", desc)
+				}
 			}
+			return
 		}
+	}
+
+	// Default rendering for other tools
+	description := ""
+	if desc, ok := inputMap["description"].(string); ok {
+		description = desc
 	}
 
 	// Format status
