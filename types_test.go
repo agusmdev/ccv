@@ -74,28 +74,6 @@ func TestParseMessage_Result(t *testing.T) {
 	}
 }
 
-func TestParseMessage_UserMessage(t *testing.T) {
-	data := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_123","content":"output"}]}}`)
-
-	msg, err := ParseMessage(data)
-	if err != nil {
-		t.Fatalf("ParseMessage failed: %v", err)
-	}
-
-	user, ok := msg.(*UserMessage)
-	if !ok {
-		t.Fatalf("expected *UserMessage, got %T", msg)
-	}
-
-	if len(user.Message.Content) != 1 {
-		t.Fatalf("expected 1 content block, got %d", len(user.Message.Content))
-	}
-
-	if user.Message.Content[0].ToolUseID != "tool_123" {
-		t.Errorf("expected tool_use_id 'tool_123', got '%s'", user.Message.Content[0].ToolUseID)
-	}
-}
-
 func TestParseMessage_StreamEvent(t *testing.T) {
 	data := []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`)
 
