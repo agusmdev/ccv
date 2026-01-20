@@ -2,8 +2,6 @@ package main
 
 import (
 	"os"
-
-	"golang.org/x/term"
 )
 
 // ANSI color codes
@@ -72,8 +70,8 @@ type ColorScheme struct {
 	Reset string
 }
 
-// colorEnabled tracks whether colors should be used
-var colorEnabled bool
+// colorEnabled tracks whether colors should be used (default true)
+var colorEnabled = true
 
 // noColorFlag tracks if --no-color flag was passed
 var noColorFlag bool
@@ -122,8 +120,8 @@ func DefaultScheme() *ColorScheme {
 	}
 }
 
-// initColors determines if colors should be enabled based on terminal capability
-// and environment variables (NO_COLOR, TERM)
+// initColors determines if colors should be disabled based on environment variables
+// Colors are enabled by default
 func initColors() {
 	// Check NO_COLOR environment variable (https://no-color.org/)
 	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
@@ -137,8 +135,7 @@ func initColors() {
 		return
 	}
 
-	// Check if stdout is a terminal
-	colorEnabled = term.IsTerminal(int(os.Stdout.Fd()))
+	// Colors stay enabled by default (no terminal check)
 }
 
 // NoColorScheme returns a scheme with no colors (empty strings)
@@ -146,12 +143,13 @@ func NoColorScheme() *ColorScheme {
 	return &ColorScheme{}
 }
 
-// GetScheme returns the appropriate color scheme based on terminal capability
+// GetScheme returns the appropriate color scheme based on settings
 func GetScheme() *ColorScheme {
-	if colorEnabled && !noColorFlag {
-		return DefaultScheme()
+	// No color flag or environment disables colors
+	if noColorFlag || !colorEnabled {
+		return NoColorScheme()
 	}
-	return NoColorScheme()
+	return DefaultScheme()
 }
 
 // C is a helper that returns the color code if colors are enabled, empty string otherwise
