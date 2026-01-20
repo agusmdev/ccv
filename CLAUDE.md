@@ -8,25 +8,18 @@ CCV (Claude Code Viewer) is a Go-based headless CLI wrapper for the Claude Code 
 
 ## Development Commands
 
-### Building
+### Building and Installing
 ```bash
-go build -o ccv
+make install    # Build and install to /usr/local/bin (uses sudo if needed)
+make build      # Build only (outputs ./ccv)
+make uninstall  # Remove from /usr/local/bin
+make clean      # Remove local build artifact
 ```
 
 ### Running Locally
 ```bash
 go run . "Your prompt here"
 go run . -- -p "Your prompt" --allowedTools Read,Bash
-```
-
-### Installing
-```bash
-# Build and install to system
-go build -o ccv
-sudo mv ccv /usr/local/bin/
-
-# Or use Go install
-go install github.com/agusmdev/ccv@latest
 ```
 
 ## Architecture
@@ -121,7 +114,7 @@ bd sync               # Sync with git
 When ending a work session:
 
 1. **File issues** for remaining work
-2. **Run quality gates** (if code changed) - Build with `go build -o ccv`
+2. **Run quality gates** (if code changed) - Build with `make build`
 3. **Update issue status** - Close finished work with `bd close <id>`
 4. **PUSH TO REMOTE** (MANDATORY):
    ```bash
