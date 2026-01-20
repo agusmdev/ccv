@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,9 +19,10 @@ type Model struct {
 	appState *AppState
 
 	// UI state
-	width  int
-	height int
-	ready  bool
+	width   int
+	height  int
+	ready   bool
+	spinner spinner.Model
 
 	// Error state
 	err error
@@ -55,11 +57,17 @@ type Styles struct {
 
 // NewModel creates a new Bubble Tea model
 func NewModel(runner *ClaudeRunner) Model {
+	// Create spinner with bubbles style
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
+
 	return Model{
 		runner:   runner,
 		messages: make([]interface{}, 0),
 		appState: NewAppState(),
 		styles:   NewStyles(),
+		spinner:  s,
 	}
 }
 
@@ -153,10 +161,11 @@ type ErrorOccurred struct {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	// Start listening for messages from the runner
+	// Start listening for messages from the runner and start spinner
 	return tea.Batch(
 		waitForMessage(m.runner),
 		waitForError(m.runner),
+		m.spinner.Tick,
 	)
 }
 
@@ -186,6 +195,8 @@ func waitForError(runner *ClaudeRunner) tea.Cmd {
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
@@ -195,6 +206,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runner.Stop()
 			return m, tea.Quit
 		}
+
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case tea.WindowSizeMsg:
 		// Handle terminal resize
@@ -361,14 +376,34 @@ func (m Model) View() string {
 		}
 	}
 
-	// Show token count
-	if m.appState.TotalTokens.TotalTokens > 0 {
+	// Show token count with spinner
+	if m.appState.TotalTokens.TotalTokens > 0 || m.appState.CurrentAgent != nil {
 		content = append(content, "")
-		tokenInfo := fmt.Sprintf("Tokens: %d input, %d output, %d total",
-			m.appState.TotalTokens.InputTokens,
-			m.appState.TotalTokens.OutputTokens,
-			m.appState.TotalTokens.TotalTokens)
-		content = append(content, m.styles.systemInfo.Render(tokenInfo))
+
+		// Build token and agent context line
+		var statusLine strings.Builder
+
+		// Add spinner
+		statusLine.WriteString(m.spinner.View())
+		statusLine.WriteString(" ")
+
+		// Add agent context if available
+		if m.appState.CurrentAgent != nil {
+			agentContext := fmt.Sprintf("[%s: %s]", m.appState.CurrentAgent.Type, m.appState.CurrentAgent.Status)
+			statusLine.WriteString(agentContext)
+			statusLine.WriteString(" ")
+		}
+
+		// Add token count
+		if m.appState.TotalTokens.TotalTokens > 0 {
+			tokenInfo := fmt.Sprintf("Tokens: %d in, %d out, %d total",
+				m.appState.TotalTokens.InputTokens,
+				m.appState.TotalTokens.OutputTokens,
+				m.appState.TotalTokens.TotalTokens)
+			statusLine.WriteString(tokenInfo)
+		}
+
+		content = append(content, m.styles.systemInfo.Render(statusLine.String()))
 	}
 
 	// Show errors
