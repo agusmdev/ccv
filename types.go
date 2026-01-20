@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // MessageType represents the type of SDK message
@@ -526,7 +527,16 @@ func (a *AppState) ClearStreamState() {
 }
 
 // ParseMessage attempts to parse a JSON message and return the appropriate type
-func ParseMessage(data []byte) (interface{}, error) {
+func ParseMessage(data []byte) (result interface{}, err error) {
+	// Add recovery to catch any panics during JSON parsing
+	// This protects against deeply nested JSON, invalid Unicode, etc.
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = fmt.Errorf("parse panic: %v", r)
+		}
+	}()
+
 	var base BaseMessage
 	if err := json.Unmarshal(data, &base); err != nil {
 		return nil, err

@@ -151,6 +151,14 @@ func (r *ClaudeRunner) parseStdout() {
 	defer r.wg.Done()
 	defer close(r.messages)
 
+	// Add recovery to catch any panics during parsing
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Log panic to stderr and continue - CCV must never crash
+			fmt.Fprintf(os.Stderr, "Error: panic in parseStdout: %v\n", recovered)
+		}
+	}()
+
 	scanner := bufio.NewScanner(r.stdout)
 	// Increase buffer size for large messages
 	buf := make([]byte, 0, 64*1024)

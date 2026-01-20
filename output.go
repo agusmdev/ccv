@@ -50,6 +50,14 @@ func NewOutputProcessor(format string, verbose bool, quiet bool) *OutputProcesso
 
 // ProcessMessages consumes messages from the channel and outputs them
 func (p *OutputProcessor) ProcessMessages(messages <-chan interface{}, errors <-chan error) {
+	// Add recovery to catch any panics in the message processing loop
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Log panic to stderr - CCV must never crash
+			fmt.Fprintf(os.Stderr, "Error: panic in ProcessMessages: %v\n", recovered)
+		}
+	}()
+
 	for {
 		select {
 		case msg, ok := <-messages:
@@ -70,6 +78,14 @@ func (p *OutputProcessor) ProcessMessages(messages <-chan interface{}, errors <-
 
 // processMessage handles a single message based on its type
 func (p *OutputProcessor) processMessage(msg interface{}) {
+	// Add recovery to catch any panics during message processing
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Log panic to stderr and continue - CCV must never crash
+			fmt.Fprintf(os.Stderr, "Error: panic in processMessage: %v\n", recovered)
+		}
+	}()
+
 	// JSON mode: just output the raw message
 	if p.mode == OutputModeJSON {
 		data, err := json.Marshal(msg)
