@@ -706,6 +706,69 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		return
 	}
 
+	// Handle AskUserQuestion tool specially - display questions with numbered options
+	if toolCall.Name == "AskUserQuestion" {
+		if questionsRaw, ok := inputMap["questions"].([]interface{}); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset)
+
+			// Print each question with its options
+			for i, questionRaw := range questionsRaw {
+				if questionMap, ok := questionRaw.(map[string]interface{}); ok {
+					question, hasQuestion := questionMap["question"].(string)
+					header, hasHeader := questionMap["header"].(string)
+					multiSelect, _ := questionMap["multiSelect"].(bool)
+
+					if hasQuestion {
+						// Print question header with index if multiple questions
+						if len(questionsRaw) > 1 {
+							if hasHeader {
+								fmt.Fprintf(p.writer, "  %s[%s]%s %s\n", c.LabelDim, header, c.Reset, question)
+							} else {
+								fmt.Fprintf(p.writer, "  %s[Q%d]%s %s\n", c.LabelDim, i+1, c.Reset, question)
+							}
+						} else {
+							if hasHeader {
+								fmt.Fprintf(p.writer, "  %s[%s]%s %s\n", c.LabelDim, header, c.Reset, question)
+							} else {
+								fmt.Fprintf(p.writer, "  %s\n", question)
+							}
+						}
+
+						// Show multi-select indicator if enabled
+						if multiSelect {
+							fmt.Fprintf(p.writer, "  %s(multiple selections allowed)%s\n", c.LabelDim, c.Reset)
+						}
+
+						// Print options with numbers
+						if optionsRaw, ok := questionMap["options"].([]interface{}); ok {
+							for j, optionRaw := range optionsRaw {
+								if optionMap, ok := optionRaw.(map[string]interface{}); ok {
+									label, hasLabel := optionMap["label"].(string)
+									description, hasDesc := optionMap["description"].(string)
+
+									if hasLabel {
+										fmt.Fprintf(p.writer, "    %s%d.%s %s\n", c.LabelDim, j+1, c.Reset, label)
+
+										// Show description in verbose mode
+										if p.mode == OutputModeVerbose && hasDesc && description != "" {
+											fmt.Fprintf(p.writer, "       %s%s%s\n", c.LabelDim, description, c.Reset)
+										}
+									}
+								}
+							}
+						}
+
+						// Add spacing between questions if there are multiple
+						if i < len(questionsRaw)-1 {
+							fmt.Fprintln(p.writer)
+						}
+					}
+				}
+			}
+			return
+		}
+	}
+
 	// Handle TodoWrite tool specially - display todos in a prettified list format
 	if toolCall.Name == "TodoWrite" {
 		if todosRaw, ok := inputMap["todos"].([]interface{}); ok {

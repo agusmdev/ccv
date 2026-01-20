@@ -186,14 +186,20 @@ type ServerToolUse struct {
 
 // ModelUsageEntry represents usage for a specific model
 type ModelUsageEntry struct {
-	InputTokens            int     `json:"inputTokens"`
-	OutputTokens           int     `json:"outputTokens"`
-	CacheReadInputTokens   int     `json:"cacheReadInputTokens,omitempty"`
-	CacheCreationInputTokens int   `json:"cacheCreationInputTokens,omitempty"`
-	WebSearchRequests      int     `json:"webSearchRequests,omitempty"`
-	CostUSD                float64 `json:"costUSD,omitempty"`
-	ContextWindow          int     `json:"contextWindow,omitempty"`
-	MaxOutputTokens        int     `json:"maxOutputTokens,omitempty"`
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens,omitempty"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens,omitempty"`
+	WebSearchRequests        int     `json:"webSearchRequests,omitempty"`
+	CostUSD                  float64 `json:"costUSD,omitempty"`
+	ContextWindow            int     `json:"contextWindow,omitempty"`
+	MaxOutputTokens          int     `json:"maxOutputTokens,omitempty"`
+}
+
+// PermissionDenial represents a denied tool permission
+type PermissionDenial struct {
+	ToolName string `json:"tool_name"`
+	Reason   string `json:"reason"`
 }
 
 // Result represents the final result message
@@ -209,7 +215,7 @@ type Result struct {
 	NumTurns          int                        `json:"num_turns,omitempty"`
 	Usage             *TotalUsage                `json:"usage,omitempty"`
 	ModelUsage        map[string]*ModelUsageEntry `json:"modelUsage,omitempty"`
-	PermissionDenials []string                   `json:"permission_denials,omitempty"`
+	PermissionDenials []PermissionDenial          `json:"permission_denials,omitempty"`
 	UUID              string                     `json:"uuid,omitempty"`
 }
 
