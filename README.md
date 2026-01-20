@@ -1,6 +1,22 @@
 # CCV - Claude Code Viewer
 
+> **Warning**: This project is under active development. APIs and output formats may change between versions. Use with caution in production scripts.
+
 A lightweight headless CLI wrapper for Claude Code that renders structured text output. Perfect for scripts, automation, logging, and headless environments.
+
+## Drop-in Replacement for Headless Scripts
+
+**CCV is designed as a drop-in replacement for `claude` in headless environments.** Simply replace `claude` with `ccv` in your existing scripts to get pretty, structured output instead of raw JSON:
+
+```bash
+# Before (raw stream-json output)
+claude --print -p "Explain this code" --output-format stream-json
+
+# After (pretty formatted output)
+ccv "Explain this code"
+```
+
+CCV automatically handles all the necessary flags (`--print`, `--output-format stream-json`, `--verbose`) so you can focus on your prompts. All Claude CLI arguments are passed through transparently.
 
 ## Features
 
@@ -96,6 +112,9 @@ ccv --quiet "What is this project?"
 
 # JSON: output parsed SDK messages as JSON
 ccv --format json "Analyze the code"
+
+# Disable colors (useful for logging or piping)
+ccv --no-color "List all files"
 ```
 
 ### Piping and Scripting
@@ -138,6 +157,29 @@ ccv --version
 
 ## Configuration
 
+### CCV Flags
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Show verbose output including full tool inputs |
+| `--quiet` | Show only assistant text responses |
+| `--format <fmt>` | Output format: `text` (default) or `json` |
+| `--no-color` | Disable colored output |
+| `--help` | Show help information |
+| `--version` | Show version information |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CCV_VERBOSE=1` | Equivalent to `--verbose` |
+| `CCV_QUIET=1` | Equivalent to `--quiet` |
+| `CCV_FORMAT=json` | Equivalent to `--format json` |
+| `NO_COLOR=1` | Disable colored output (standard [no-color.org](https://no-color.org/)) |
+| `TERM=dumb` | Also disables colored output |
+
+### Claude Code Configuration
+
 CCV respects your existing Claude Code configuration. Make sure Claude Code is properly configured:
 
 ```bash
@@ -170,8 +212,10 @@ The output includes:
 ccv/
 ├── main.go      # Entry point and flag handling
 ├── runner.go    # Claude Code subprocess management
-├── output.go    # Text output processor (TO BE CREATED)
+├── output.go    # Text output processor and message formatting
 ├── types.go     # Message and event type definitions
+├── colors.go    # Terminal color scheme and ANSI codes
+├── format.go    # Text formatting utilities
 └── go.mod       # Go module dependencies
 ```
 

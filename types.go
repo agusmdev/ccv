@@ -233,11 +233,33 @@ type CompactBoundary struct {
 }
 
 // ToolUseResult represents metadata about a tool execution result
+// It can be either a string or an object in the JSON
 type ToolUseResult struct {
 	Stdout      string `json:"stdout,omitempty"`
 	Stderr      string `json:"stderr,omitempty"`
 	Interrupted bool   `json:"interrupted,omitempty"`
 	IsImage     bool   `json:"isImage,omitempty"`
+	// RawString holds the value if the JSON was a plain string
+	RawString   string `json:"-"`
+}
+
+// UnmarshalJSON handles both string and object forms of tool_use_result
+func (t *ToolUseResult) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		t.RawString = s
+		return nil
+	}
+
+	// Otherwise unmarshal as an object
+	type toolUseResultAlias ToolUseResult
+	var obj toolUseResultAlias
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*t = ToolUseResult(obj)
+	return nil
 }
 
 // UserMessageContent represents the content of a user message
