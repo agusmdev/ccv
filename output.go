@@ -282,10 +282,12 @@ type toolResultHandler func(p *OutputProcessor, toolCall *ToolCall, block *Conte
 
 // toolResultHandlers maps tool names to their result handlers
 var toolResultHandlers = map[string]toolResultHandler{
-	"Bash":      handleBashResult,
-	"Glob":      handleGlobResult,
-	"Grep":      handleGrepResult,
-	"WebSearch": handleWebSearchResult,
+	"Bash":       handleBashResult,
+	"Glob":       handleGlobResult,
+	"Grep":       handleGrepResult,
+	"WebSearch":  handleWebSearchResult,
+	"KillShell":  handleKillShellResult,
+	"TaskOutput": handleTaskOutputResult,
 }
 
 // processToolResult processes a tool result
@@ -424,6 +426,45 @@ func handleWebSearchResult(p *OutputProcessor, toolCall *ToolCall, block *Conten
 	if block.IsError {
 		fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
 	}
+}
+
+// handleKillShellResult handles KillShell tool results - show termination status
+func handleKillShellResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Shell termination failed%s\n", c.Error, c.Reset)
+	} else {
+		fmt.Fprintf(p.writer, "  %s✓ Shell terminated%s\n", c.Success, c.Reset)
+	}
+
+	// Show output content if present (typically includes success/failure details)
+	if p.mode == OutputModeVerbose && block.Content != "" {
+		lines := strings.Split(block.Content, "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				fmt.Fprintf(p.writer, "  %s\n", line)
+			}
+		}
+	}
+}
+
+// handleTaskOutputResult handles TaskOutput tool results - show task output or status
+func handleTaskOutputResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.Content != "" {
+		// Display the task output
+		lines := strings.Split(block.Content, "\n")
+		for _, line := range lines {
+			// Skip empty lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			fmt.Fprintf(p.writer, "  %s\n", line)
+		}
+	} else if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Failed to retrieve task output%s\n", c.Error, c.Reset)
+	}
+	// No output case is silent - the tool just returns nothing useful to display
 }
 
 // handleDefaultResult handles tool results for tools without specific handlers
@@ -922,6 +963,37 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 
 		return
+	}
+
+	// Handle KillShell tool specially - display shell ID being terminated
+	if toolCall.Name == "KillShell" {
+		if shellID, ok := inputMap["shell_id"].(string); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.ValueBright, shellID, c.Reset)
+			return
+		}
+	}
+
+	// Handle TaskOutput tool specially - display task ID and blocking mode
+	if toolCall.Name == "TaskOutput" {
+		if taskID, ok := inputMap["task_id"].(string); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.ValueBright, taskID, c.Reset)
+
+			// Show blocking mode if present
+			if block, ok := inputMap["block"].(bool); ok && block {
+				fmt.Fprintf(p.writer, " %s[blocking]%s", c.LabelDim, c.Reset)
+			} else if block, ok := inputMap["block"].(string); ok && block == "true" {
+				fmt.Fprintf(p.writer, " %s[blocking]%s", c.LabelDim, c.Reset)
+			}
+			fmt.Fprintln(p.writer)
+
+			// Show timeout if present (in verbose mode only)
+			if p.mode == OutputModeVerbose {
+				if timeout, ok := inputMap["timeout"].(float64); ok && timeout > 0 {
+					fmt.Fprintf(p.writer, "  %sTimeout:%s %s%.0fms%s\n", c.LabelDim, c.Reset, c.ValueBright, timeout, c.Reset)
+				}
+			}
+			return
+		}
 	}
 
 	// Default rendering for other tools
