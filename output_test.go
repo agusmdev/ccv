@@ -969,3 +969,720 @@ func TestPrintToolCall_Context7QueryDocs_Verbose(t *testing.T) {
 		t.Errorf("expected limit '10' in verbose mode, got: %q", output)
 	}
 }
+
+// TestPrintToolCall_AskUserQuestion tests the AskUserQuestion tool formatting
+func TestPrintToolCall_AskUserQuestion(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_ask", "AskUserQuestion", map[string]interface{}{
+		"questions": []interface{}{
+			map[string]interface{}{
+				"question": "What would you like to do?",
+				"header":   "Choice",
+				"multiSelect": false,
+				"options": []interface{}{
+					map[string]interface{}{
+						"label": "Option A",
+						"description": "Do something cool",
+					},
+					map[string]interface{}{
+						"label": "Option B",
+						"description": "Do something else",
+					},
+				},
+			},
+		},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "AskUserQuestion") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "What would you like to do?") {
+		t.Errorf("expected question text, got: %q", output)
+	}
+	if !strings.Contains(output, "Option A") {
+		t.Errorf("expected option A, got: %q", output)
+	}
+	if !strings.Contains(output, "Option B") {
+		t.Errorf("expected option B, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_TodoWrite tests the TodoWrite tool formatting
+func TestPrintToolCall_TodoWrite(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_todo", "TodoWrite", map[string]interface{}{
+		"todos": []interface{}{
+			map[string]interface{}{
+				"content": "First task",
+				"status": "pending",
+			},
+			map[string]interface{}{
+				"content": "Second task",
+				"status": "in_progress",
+			},
+			map[string]interface{}{
+				"content": "Third task",
+				"status": "completed",
+			},
+		},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "TodoWrite") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "First task") {
+		t.Errorf("expected first task, got: %q", output)
+	}
+	// Should have status icons
+	if !strings.Contains(output, "○") {
+		t.Errorf("expected pending icon, got: %q", output)
+	}
+	if !strings.Contains(output, "◐") {
+		t.Errorf("expected in_progress icon, got: %q", output)
+	}
+	if !strings.Contains(output, "●") {
+		t.Errorf("expected completed icon, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_WebSearch tests the WebSearch tool formatting
+func TestPrintToolCall_WebSearch(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_web", "WebSearch", map[string]interface{}{
+		"query": "golang best practices",
+		"allowed_domains": []interface{}{"go.dev", "golang.org"},
+		"blocked_domains": []interface{}{"spam.com"},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "WebSearch") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "golang best practices") {
+		t.Errorf("expected query, got: %q", output)
+	}
+	if !strings.Contains(output, "Allowed") {
+		t.Errorf("expected allowed domains, got: %q", output)
+	}
+	if !strings.Contains(output, "Blocked") {
+		t.Errorf("expected blocked domains, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_WebFetch tests the WebFetch tool formatting
+func TestPrintToolCall_WebFetch(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_fetch", "WebFetch", map[string]interface{}{
+		"url": "https://example.com/article",
+		"prompt": "Summarize this article",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "WebFetch") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "https://example.com/article") {
+		t.Errorf("expected URL, got: %q", output)
+	}
+	if !strings.Contains(output, "Prompt") {
+		t.Errorf("expected prompt label, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_WebFetch_Verbose tests WebFetch in verbose mode
+func TestPrintToolCall_WebFetch_Verbose(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	// Create a long prompt to test truncation and verbose expansion
+	longPrompt := strings.Repeat("word ", 50) // 400 chars
+	toolCall := createTestToolCall("tool_fetch", "WebFetch", map[string]interface{}{
+		"url": "https://example.com/article",
+		"prompt": longPrompt,
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "WebFetch") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	// In verbose mode, should show full prompt
+	if !strings.Contains(output, "Full prompt") {
+		t.Errorf("expected full prompt in verbose mode, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_LS tests the LS tool formatting
+func TestPrintToolCall_LS(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_ls", "LS", map[string]interface{}{
+		"path": "/home/user/project",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "LS") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "/home/user/project") {
+		t.Errorf("expected path, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_NotebookRead tests the NotebookRead tool formatting
+func TestPrintToolCall_NotebookRead(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_nb", "NotebookRead", map[string]interface{}{
+		"notebook_path": "/path/to/notebook.ipynb",
+		"offset": float64(5),
+		"limit": float64(10),
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "NotebookRead") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "/path/to/notebook.ipynb") {
+		t.Errorf("expected notebook path, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_NotebookEdit tests the NotebookEdit tool formatting
+func TestPrintToolCall_NotebookEdit(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_nbedit", "NotebookEdit", map[string]interface{}{
+		"notebook_path": "/path/to/notebook.ipynb",
+		"cell_id": "cell_123",
+		"edit_mode": "replace",
+		"cell_type": "code",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "NotebookEdit") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "cell_123") {
+		t.Errorf("expected cell ID, got: %q", output)
+	}
+	if !strings.Contains(output, "replace") {
+		t.Errorf("expected edit mode, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_KillShell tests the KillShell tool formatting
+func TestPrintToolCall_KillShell(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_kill", "KillShell", map[string]interface{}{
+		"shell_id": "shell_abc123",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "KillShell") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "shell_abc123") {
+		t.Errorf("expected shell ID, got: %q", output)
+	}
+}
+
+// TestPrintToolCall_TaskOutput tests the TaskOutput tool formatting
+func TestPrintToolCall_TaskOutput(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("task_out", "TaskOutput", map[string]interface{}{
+		"task_id": "task_xyz",
+		"block": true,
+		"timeout": float64(30000),
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "TaskOutput") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "task_xyz") {
+		t.Errorf("expected task ID, got: %q", output)
+	}
+	if !strings.Contains(output, "blocking") {
+		t.Errorf("expected blocking indicator, got: %q", output)
+	}
+}
+
+// TestHandleStreamEvent_ContentBlockStop tests content_block_stop handling
+func TestHandleStreamEvent_ContentBlockStop(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	p.state.AppendStreamThinking("some thinking")
+	w.Reset()
+
+	// Send content_block_stop event
+	event := createTestStreamEvent(StreamEventContentBlockStop, nil, nil)
+	p.handleStreamEvent(event)
+
+	output := w.String()
+	// Should have reset colors and added newline for thinking
+	if !strings.Contains(output, "\n") {
+		t.Errorf("expected newline after thinking block stop, got: %q", output)
+	}
+}
+
+// TestHandleStreamEvent_MessageDelta tests message_delta handling with usage
+func TestHandleStreamEvent_MessageDelta(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	w.Reset()
+
+	// Send message_delta with usage
+	event := &StreamEvent{
+		Type: StreamEventMessageDelta,
+		Delta: &Delta{
+			StopReason: "end_turn",
+		},
+		Usage: &Usage{
+			InputTokens:  500,
+			OutputTokens: 200,
+		},
+	}
+	p.handleStreamEvent(event)
+
+	// Tokens should be updated
+	if p.state.TotalTokens.InputTokens != 500 {
+		t.Errorf("expected input tokens 500, got %d", p.state.TotalTokens.InputTokens)
+	}
+	if p.state.TotalTokens.OutputTokens != 200 {
+		t.Errorf("expected output tokens 200, got %d", p.state.TotalTokens.OutputTokens)
+	}
+}
+
+// TestHandleStreamEvent_MessageStop tests message_stop handling
+func TestHandleStreamEvent_MessageStop(t *testing.T) {
+	p, _ := newTestOutputProcessor(OutputModeText)
+
+	event := createTestStreamEvent(StreamEventMessageStop, nil, nil)
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("message_stop handling panicked: %v", r)
+		}
+	}()
+
+	p.handleStreamEvent(event)
+}
+
+// TestHandleContentBlockStart_TaskAgentCreation tests Task tool creates child agent
+func TestHandleContentBlockStart_TaskAgentCreation(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	w.Reset()
+
+	// Send Task tool content_block_start
+	block := &ContentBlock{
+		Type: ContentBlockTypeToolUse,
+		ID:   "task_tool_123",
+		Name: "Task",
+		Input: json.RawMessage(`{
+			"subagent_type": "Explore",
+			"description": "Explore the codebase",
+			"model": "haiku"
+		}`),
+	}
+
+	event := createTestStreamEvent(StreamEventContentBlockStart, nil, block)
+	p.handleContentBlockStart(event)
+
+	// Child agent should be created
+	childAgent, ok := p.state.AgentsByID["task_tool_123"]
+	if !ok {
+		t.Fatal("expected child agent to be created")
+	}
+	if childAgent.Type != "Explore" {
+		t.Errorf("expected agent type 'Explore', got '%s'", childAgent.Type)
+	}
+	if childAgent.Description != "Explore the codebase" {
+		t.Errorf("expected description 'Explore the codebase', got '%s'", childAgent.Description)
+	}
+	if childAgent.ParentID != "main" {
+		t.Errorf("expected parent ID 'main', got '%s'", childAgent.ParentID)
+	}
+}
+
+// TestHandleContentBlockDelta_PartialJSON tests partial JSON accumulation
+func TestHandleContentBlockDelta_PartialJSON(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	w.Reset()
+
+	toolID := "tool_123"
+
+	// Send multiple partial JSON deltas
+	event1 := createTestStreamEvent(StreamEventContentBlockDelta, &Delta{
+		Type:        string(DeltaTypeInputJSONDelta),
+		PartialJSON: `{"command":`,
+	}, &ContentBlock{ID: toolID})
+
+	event2 := createTestStreamEvent(StreamEventContentBlockDelta, &Delta{
+		Type:        string(DeltaTypeInputJSONDelta),
+		PartialJSON: `"ls -la"`,
+	}, &ContentBlock{ID: toolID})
+
+	p.handleContentBlockDelta(event1)
+	p.handleContentBlockDelta(event2)
+
+	// Partial tool input should be accumulated
+	result := p.state.GetStreamToolInput(toolID)
+	expected := `{"command":"ls -la"`
+	if result != expected {
+		t.Errorf("expected accumulated input %q, got %q", expected, result)
+	}
+}
+
+// TestProcessMessage_CompactBoundary tests compact_boundary message handling
+func TestProcessMessage_CompactBoundary(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	msg := &CompactBoundary{
+		Type:      "compact_boundary",
+		Subtype:   "context_trim",
+		SessionID: "test-session",
+	}
+
+	p.processMessage(msg)
+
+	// CompactBoundary should be skipped in text mode
+	output := w.String()
+	if strings.Contains(output, "compact_boundary") {
+		t.Error("compact_boundary should not produce output in text mode")
+	}
+}
+
+// TestProcessMessage_JSONMode_CompactBoundary tests compact_boundary in JSON mode
+func TestProcessMessage_JSONMode_CompactBoundary(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeJSON)
+
+	msg := &CompactBoundary{
+		Type:      "compact_boundary",
+		Subtype:   "context_trim",
+		SessionID: "test-session",
+	}
+
+	p.processMessage(msg)
+
+	output := w.String()
+
+	// In JSON mode, should be valid JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+		t.Errorf("expected valid JSON output, got error: %v, output: %s", err, output)
+	}
+	if result["type"] != "compact_boundary" {
+		t.Errorf("expected type 'compact_boundary', got: %v", result["type"])
+	}
+}
+
+// TestPrintAgentContext_NestedAgents tests nested agent context display
+func TestPrintAgentContext_NestedAgents(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	// Create nested child agents
+	child1 := p.state.CreateChildAgent("child_1", "task", "First task")
+	p.state.SetCurrentAgent("child_1")
+	w.Reset()
+
+	child2 := p.state.CreateChildAgent("child_2", "explore", "Explore")
+	p.state.SetCurrentAgent("child_2")
+	w.Reset()
+
+	p.printAgentContext()
+
+	output := w.String()
+	// Should show indentation based on depth
+	expectedIndent := strings.Repeat("  ", child2.Depth)
+	if !strings.HasPrefix(output, expectedIndent) {
+		t.Errorf("expected indentation of depth %d, got: %q", child2.Depth, output)
+	}
+	// Should show agent type
+	if !strings.Contains(output, "explore") {
+		t.Errorf("expected agent type 'explore', got: %q", output)
+	}
+}
+
+// TestPrintAgentContext_VerboseMode tests agent context in verbose mode
+func TestPrintAgentContext_VerboseMode(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+	p.state.RootAgent.Description = "Main agent doing work"
+	w.Reset()
+
+	p.printAgentContext()
+
+	output := w.String()
+	// In verbose mode, should show description
+	if !strings.Contains(output, "Main agent doing work") {
+		t.Errorf("expected description in verbose mode, got: %q", output)
+	}
+}
+
+// TestPrintFinalSummary_DurationFormats tests different duration formats
+func TestPrintFinalSummary_DurationFormats(t *testing.T) {
+	tests := []struct {
+		name         string
+		duration     int64
+		shouldContain string
+	}{
+		{
+			name:         "milliseconds",
+			duration:     500,
+			shouldContain: "500ms",
+		},
+		{
+			name:         "seconds",
+			duration:     5000,
+			shouldContain: "5.0s",
+		},
+		{
+			name:         "minutes and seconds",
+			duration:     125000, // 2m 5s
+			shouldContain: "2m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, w := newTestOutputProcessor(OutputModeText)
+
+			p.result = createTestResult(0.01, tt.duration, 2)
+			p.state.TotalTokens = &TotalUsage{
+				InputTokens:  1000,
+				OutputTokens: 500,
+			}
+
+			p.printFinalSummary()
+
+			output := w.String()
+			if !strings.Contains(output, tt.shouldContain) {
+				t.Errorf("expected duration format %q, got: %q", tt.shouldContain, output)
+			}
+		})
+	}
+}
+
+// TestPrintFinalSummary_ZeroValues tests summary with zero values
+func TestPrintFinalSummary_ZeroValues(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	// Set up with zero values
+	p.result = &Result{
+		TotalCost:  0,
+		DurationMS: 0,
+		NumTurns:   0,
+	}
+	p.state.TotalTokens = &TotalUsage{
+		InputTokens:  0,
+		OutputTokens: 0,
+	}
+
+	p.printFinalSummary()
+
+	output := w.String()
+	// Should not print anything when all values are zero
+	if strings.Contains(output, "Tokens:") {
+		t.Error("should not print tokens with zero values")
+	}
+}
+
+// TestPrintFinalSummary_CacheInfo tests cache information display
+func TestPrintFinalSummary_CacheInfo(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.result = createTestResult(0.01, 5000, 2)
+	p.state.TotalTokens = &TotalUsage{
+		InputTokens:         1000,
+		OutputTokens:        500,
+		CacheReadInputTokens: 200,
+		CacheCreationInputTokens: 50,
+	}
+
+	p.printFinalSummary()
+
+	output := w.String()
+	if !strings.Contains(output, "Cache") {
+		t.Error("expected cache information in summary")
+	}
+	if !strings.Contains(output, "read") {
+		t.Error("expected cache read information")
+	}
+	if !strings.Contains(output, "created") {
+		t.Error("expected cache creation information")
+	}
+}
+
+// TestHandleProcessMessages_PanicRecovery tests panic recovery in ProcessMessages
+func TestHandleProcessMessages_PanicRecovery(t *testing.T) {
+	messages := make(chan interface{}, 10)
+	errors := make(chan error, 10)
+
+	p := &OutputProcessor{
+		mode:   OutputModeText,
+		writer: &mockWriter{},
+		state:  NewAppState(),
+		colors: NoColorScheme(),
+	}
+
+	// Send a message that might cause issues
+	messages <- &BaseMessage{Type: "unknown"}
+	close(messages)
+	close(errors)
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("ProcessMessages panicked: %v", r)
+		}
+	}()
+
+	p.ProcessMessages(messages, errors)
+}
+
+// TestHandleContentBlock_ToolUseWithNilInput tests tool_use block with nil input
+func TestHandleContentBlock_ToolUseWithNilInput(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	toolCall := createTestToolCall("tool_nil", "Read", nil)
+	p.state.AddOrUpdateToolCall(toolCall)
+	w.Reset()
+
+	block := &ContentBlock{
+		Type:  ContentBlockTypeToolUse,
+		ID:    "tool_nil",
+		Name:  "Read",
+		Input: nil,
+	}
+
+	// Should not panic with nil input
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("processContentBlock with nil input panicked: %v", r)
+		}
+	}()
+
+	p.processContentBlock(block)
+}
+
+// TestHandleDefaultResult tests the default tool result handler
+func TestHandleDefaultResult(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("unknown_tool", "SomeUnknownTool", map[string]interface{}{
+		"param": "value",
+	})
+
+	block := createTestToolResultBlock("unknown_tool", "result content", false)
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	handleDefaultResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "SomeUnknownTool") {
+		t.Errorf("expected tool name, got: %q", output)
+	}
+	if !strings.Contains(output, "completed") {
+		t.Errorf("expected completion status, got: %q", output)
+	}
+}
+
+// TestHandleDefaultResult_VerboseMode tests default handler in verbose mode
+func TestHandleDefaultResult_VerboseMode(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("unknown_tool", "SomeTool", map[string]interface{}{})
+
+	block := createTestToolResultBlock("unknown_tool", "multi\nline\nresult", false)
+
+	handleDefaultResult(p, toolCall, block)
+
+	output := w.String()
+	// In verbose mode, should show result content
+	if !strings.Contains(output, "multi") {
+		t.Errorf("expected result content in verbose mode, got: %q", output)
+	}
+	if !strings.Contains(output, "line") {
+		t.Errorf("expected result content in verbose mode, got: %q", output)
+	}
+}
+
+// TestHandleDefaultResult_WithError tests default handler with error
+func TestHandleDefaultResult_WithError(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("failed_tool", "FailingTool", map[string]interface{}{})
+
+	block := createTestToolResultBlock("failed_tool", "error details", true)
+
+	handleDefaultResult(p, toolCall, block)
+
+	output := w.String()
+	if !strings.Contains(output, "✗") {
+		t.Errorf("expected error indicator, got: %q", output)
+	}
+}
+
+// TestProcessToolResult_TaskResultSwitchesParent tests Task result switches back to parent
+func TestProcessToolResult_TaskResultSwitchesParent(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	p.state.InitializeSession(createTestSystemInit("test", "model"))
+
+	// Create a child agent
+	child := p.state.CreateChildAgent("task_tool", "Task", "Do something")
+	p.state.SetCurrentAgent("task_tool")
+	w.Reset()
+
+	// Complete the Task tool
+	block := createTestToolResultBlock("task_tool", "task completed", false)
+	p.processToolResult(block)
+
+	// Should switch back to parent (main)
+	if p.state.CurrentAgent.ID != "main" {
+		t.Errorf("expected current agent to be 'main', got '%s'", p.state.CurrentAgent.ID)
+	}
+	// Child should be marked completed
+	if child.Status != AgentStatusCompleted {
+		t.Errorf("expected child status 'completed', got '%s'", child.Status)
+	}
+}

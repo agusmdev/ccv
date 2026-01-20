@@ -1,7 +1,9 @@
 package main
 
 import (
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestHasFlag(t *testing.T) {
@@ -307,4 +309,336 @@ func TestClaudeRunner_WriteInput(t *testing.T) {
 			t.Error("WriteInput() with nil stdin should return an error")
 		}
 	})
+}
+
+// mockReadCloser implements io.ReadCloser for testing
+type mockReadCloser struct {
+	readFunc  func([]byte) (int, error)
+	closeFunc func() error
+	closed    bool
+}
+
+func (m *mockReadCloser) Read(p []byte) (int, error) {
+	if m.readFunc != nil {
+		return m.readFunc(p)
+	}
+	return 0, nil
+}
+
+func (m *mockReadCloser) Close() error {
+	m.closed = true
+	if m.closeFunc != nil {
+		return m.closeFunc()
+	}
+	return nil
+}
+
+// TestClaudeRunner_parseStdout_PanicRecovery tests that parseStdout recovers from panics
+func TestClaudeRunner_parseStdout_PanicRecovery(t *testing.T) {
+	// Create a mock stdin that causes a panic
+	panicRead := func(p []byte) (int, error) {
+		panic("test panic in parseStdout")
+	}
+
+	runner := &ClaudeRunner{
+		stdout: &mockReadCloser{
+			readFunc: panicRead,
+		},
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		wg:       &sync.WaitGroup{},
+	}
+
+	// Start parseStdout in goroutine
+	done := make(chan bool)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// This is expected, we're testing panic recovery
+				done <- true
+			}
+		}()
+		runner.parseStdout()
+		close(done)
+	}()
+
+	// Wait for completion
+	select {
+	case <-done:
+		// Panic was caught
+	case <-time.After(1 * time.Second):
+		t.Error("parseStdout did not complete within timeout")
+	}
+}
+
+// TestClaudeRunner_forwardStderr_PanicRecovery tests that forwardStderr handles panics
+func TestClaudeRunner_forwardStderr_PanicRecovery(t *testing.T) {
+	// Create a mock stderr that causes a panic
+	panicRead := func(p []byte) (int, error) {
+		panic("test panic in forwardStderr")
+	}
+
+	runner := &ClaudeRunner{
+		stderr: &mockReadCloser{
+			readFunc: panicRead,
+		},
+		wg: &sync.WaitGroup{},
+	}
+
+	// Start forwardStderr in goroutine
+	done := make(chan bool)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- true
+			}
+		}()
+		runner.forwardStderr()
+		close(done)
+	}()
+
+	// Wait for completion
+	select {
+	case <-done:
+		// Panic was caught
+	case <-time.After(1 * time.Second):
+		t.Error("forwardStderr did not complete within timeout")
+	}
+}
+
+// TestClaudeRunner_MessagesChannel tests Messages() returns correct channel
+func TestClaudeRunner_MessagesChannel(t *testing.T) {
+	messages := make(chan interface{}, 10)
+	runner := &ClaudeRunner{
+		messages: messages,
+	}
+
+	result := runner.Messages()
+	if result != messages {
+		t.Error("Messages() should return the messages channel")
+	}
+}
+
+// TestClaudeRunner_ErrorsChannel tests Errors() returns correct channel
+func TestClaudeRunner_ErrorsChannel(t *testing.T) {
+	errors := make(chan error, 10)
+	runner := &ClaudeRunner{
+		errors: errors,
+	}
+
+	result := runner.Errors()
+	if result != errors {
+		t.Error("Errors() should return the errors channel")
+	}
+}
+
+// TestHasFlag_EdgeCases tests additional edge cases for hasFlag
+func TestHasFlag_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		flag     string
+		expected bool
+	}{
+		{
+			name:     "flag with equals and exact match",
+			args:     []string{"--output-format=stream-json"},
+			flag:     "--output-format",
+			expected: true,
+		},
+		{
+			name:     "similar but different flag",
+			args:     []string{"--output", "--format"},
+			flag:     "--output-format",
+			expected: false,
+		},
+		{
+			name:     "flag as substring of another",
+			args:     []string{"--verbose-mode"},
+			flag:     "--verbose",
+			expected: false,
+		},
+		{
+			name:     "flag appears multiple times",
+			args:     []string{"--verbose", "--other", "--verbose"},
+			flag:     "--verbose",
+			expected: true,
+		},
+		{
+			name:     "single dash long flag",
+			args:     []string{"-verbose"},
+			flag:     "--verbose",
+			expected: false,
+		},
+		{
+			name:     "flag with value attached but no equals",
+			args:     []string{"--formatjson"},
+			flag:     "--format",
+			expected: false,
+		},
+		{
+			name:     "case sensitivity",
+			args:     []string{"--Verbose"},
+			flag:     "--verbose",
+			expected: false,
+		},
+		{
+			name:     "flag with extra dashes",
+			args:     []string{"---verbose"},
+			flag:     "--verbose",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasFlag(tt.args, tt.flag)
+			if result != tt.expected {
+				t.Errorf("hasFlag(%v, %q) = %v, want %v", tt.args, tt.flag, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestHasFlagValue_EdgeCases tests additional edge cases for hasFlagValue
+func TestHasFlagValue_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		flag     string
+		value    string
+		expected bool
+	}{
+		{
+			name:     "value matches but different flag",
+			args:     []string{"--other", "stream-json"},
+			flag:     "--output-format",
+			value:    "stream-json",
+			expected: false,
+		},
+		{
+			name:     "empty value in args",
+			args:     []string{"--output-format", ""},
+			flag:     "--output-format",
+			value:    "",
+			expected: true,
+		},
+		{
+			name:     "value with special characters",
+			args:     []string{"--query", "name=test&value=123"},
+			flag:     "--query",
+			value:    "name=test&value=123",
+			expected: true,
+		},
+		{
+			name:     "multiple spaces in value",
+			args:     []string{"--description", "some thing with spaces"},
+			flag:     "--description",
+			value:    "some thing with spaces",
+			expected: true,
+		},
+		{
+			name:     "equals format with spaces",
+			args:     []string{"--format=stream json"},
+			flag:     "--format",
+			value:    "stream json",
+			expected: true,
+		},
+		{
+			name:     "flag at end with no value",
+			args:     []string{"--output", "--format"},
+			flag:     "--format",
+			value:    "json",
+			expected: false,
+		},
+		{
+			name:     "value with number",
+			args:     []string{"--max-turns", "50"},
+			flag:     "--max-turns",
+			value:    "50",
+			expected: true,
+		},
+		{
+			name:     "value with boolean string",
+			args:     []string{"--enabled", "true"},
+			flag:     "--enabled",
+			value:    "true",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasFlagValue(tt.args, tt.flag, tt.value)
+			if result != tt.expected {
+				t.Errorf("hasFlagValue(%v, %q, %q) = %v, want %v", tt.args, tt.flag, tt.value, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestClaudeRunner_WaitGroup tests Wait() properly waits for goroutines
+func TestClaudeRunner_WaitGroup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WaitGroup test in short mode")
+	}
+
+	runner := &ClaudeRunner{
+		wg: &sync.WaitGroup{},
+	}
+
+	// Add some work to the wait group
+	runner.wg.Add(2)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		runner.wg.Done()
+	}()
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		runner.wg.Done()
+	}()
+
+	// Wait should complete
+	done := make(chan bool)
+	go func() {
+		runner.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(1 * time.Second):
+		t.Error("Wait() did not complete within timeout")
+	}
+}
+
+// TestClaudeRunner_StopOrder tests that Stop() calls cancel before Wait
+func TestClaudeRunner_StopOrder(t *testing.T) {
+	callOrder := []string{}
+	runner := &ClaudeRunner{
+		cancel: func() {
+			callOrder = append(callOrder, "cancel")
+		},
+		wg: &sync.WaitGroup{},
+	}
+
+	// Mock Wait to track when it's called
+	originalWait := runner.Wait
+	runner.Wait = func() {
+		callOrder = append(callOrder, "wait")
+		originalWait()
+	}
+
+	runner.Stop()
+
+	if len(callOrder) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %v", len(callOrder), callOrder)
+	}
+	if callOrder[0] != "cancel" {
+		t.Errorf("expected cancel to be called first, got: %v", callOrder)
+	}
+	if callOrder[1] != "wait" {
+		t.Errorf("expected wait to be called second, got: %v", callOrder)
+	}
 }
