@@ -198,6 +198,14 @@ func (r *ClaudeRunner) parseStdout() {
 func (r *ClaudeRunner) forwardStderr() {
 	defer r.wg.Done()
 
+	// Add recovery to catch any panics during stderr forwarding
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Log panic to stderr and continue - CCV must never crash
+			fmt.Fprintf(os.Stderr, "Error: panic in forwardStderr: %v\n", recovered)
+		}
+	}()
+
 	scanner := bufio.NewScanner(r.stderr)
 	for scanner.Scan() {
 		select {
@@ -216,6 +224,14 @@ func (r *ClaudeRunner) forwardStderr() {
 // waitForCompletion waits for the process to complete
 func (r *ClaudeRunner) waitForCompletion() {
 	defer r.wg.Done()
+
+	// Add recovery to catch any panics during wait
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Log panic to stderr and continue - CCV must never crash
+			fmt.Fprintf(os.Stderr, "Error: panic in waitForCompletion: %v\n", recovered)
+		}
+	}()
 
 	err := r.cmd.Wait()
 

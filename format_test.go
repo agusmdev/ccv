@@ -671,3 +671,145 @@ func TestFormatCodeBlock_LineNumberWidth(t *testing.T) {
 		})
 	}
 }
+
+// FuzzFormatMCPToolName tests FormatMCPToolName with random string input
+func FuzzFormatMCPToolName(f *testing.F) {
+	// Seed corpus with valid cases
+	f.Add([]byte("Bash"))
+	f.Add([]byte("mcp__filesystem__read_file"))
+	f.Add([]byte("mcp__plugin_sub__tool"))
+	f.Add([]byte("mcp__"))
+	f.Add([]byte("some_random_tool"))
+	f.Add([]byte(""))
+	f.Add([]byte("mcp__a__b"))
+	f.Add([]byte("mcp__a_b_c__tool_name"))
+
+	// Add edge cases
+	f.Add([]byte("mcp"))
+	f.Add([]byte("__"))
+	f.Add([]byte("mcp____"))
+	f.Add([]byte("mcp___tool"))
+
+	// Add special characters
+	f.Add([]byte("mcp__plugin__tool\x00"))
+	f.Add([]byte("mcp__plugin\x80__tool"))
+
+	// Add long strings
+	longInput := make([]byte, 0, 10000)
+	longInput = append(longInput, []byte("mcp__")...)
+	for i := 0; i < 5000; i++ {
+		longInput = append(longInput, 'a')
+	}
+	longInput = append(longInput, []byte("__")...)
+	for i := 0; i < 5000; i++ {
+		longInput = append(longInput, 'b')
+	}
+	f.Add(longInput)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		input := string(data)
+
+		// FormatMCPToolName should never panic, even with malformed input
+		result := FormatMCPToolName(input)
+
+		// Result should be a valid string (not nil)
+		// The function either transforms valid MCP names or returns the original
+		_ = result
+	})
+}
+
+// FuzzHighlightSyntax tests highlightSyntax with random string input
+func FuzzHighlightSyntax(f *testing.F) {
+	scheme := DefaultScheme()
+
+	// Seed corpus with valid cases
+	f.Add([]byte(`echo "hello"`))
+	f.Add([]byte(`echo 'world'`))
+	f.Add([]byte(`count 42 items`))
+	f.Add([]byte(`echo $HOME`))
+	f.Add([]byte(`cmd --verbose --output=file`))
+	f.Add([]byte(`cmd -v -f`))
+	f.Add([]byte(`value 3.14 end`))
+	f.Add([]byte(""))
+	f.Add([]byte("simple text"))
+	f.Add([]byte("echo \"hello\" --flag 42 $HOME"))
+
+	// Add edge cases - special regex characters
+	f.Add([]byte(`echo "test" && ls | grep .go`))
+	f.Add([]byte(`echo "(nested)[braces]{symbols}"`))
+	f.Add([]byte(`echo "$$VAR"`))
+
+	// Add null bytes and invalid UTF-8
+	f.Add([]byte("test\x00"))
+	f.Add([]byte("test\xff"))
+
+	// Add strings with many quotes to potentially break regex
+	manyQuotes := make([]byte, 0, 10000)
+	for i := 0; i < 5000; i++ {
+		manyQuotes = append(manyQuotes, []byte(`"test"`)...)
+	}
+	f.Add(manyQuotes)
+
+	// Add long line
+	longLine := make([]byte, 0, 1024*1024)
+	for i := 0; i < 1024*1024; i++ {
+		longLine = append(longLine, 'a')
+	}
+	f.Add(longLine)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		input := string(data)
+
+		// highlightSyntax should never panic, even with malformed input
+		// It handles regex operations internally
+		result := highlightSyntax(input, scheme)
+
+		// Result should be a valid string
+		_ = result
+	})
+}
+
+// FuzzIndentLines tests IndentLines with random string input
+func FuzzIndentLines(f *testing.F) {
+	// Seed corpus with valid cases
+	f.Add([]byte("hello"))
+	f.Add([]byte("line1\nline2\nline3"))
+	f.Add([]byte(""))
+	f.Add([]byte("\n\n"))
+	f.Add([]byte("line1\n\nline3"))
+	f.Add([]byte("single line with no newlines"))
+
+	// Add edge cases with many newlines
+	manyNewlines := make([]byte, 0, 10000)
+	for i := 0; i < 5000; i++ {
+		manyNewlines = append(manyNewlines, '\n')
+	}
+	f.Add(manyNewlines)
+
+	// Add very long line
+	longLine := make([]byte, 0, 100*1024)
+	for i := 0; i < 100*1024; i++ {
+		longLine = append(longLine, 'a')
+	}
+	f.Add(longLine)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		input := string(data)
+
+		// Test with various indents
+		indents := []string{"", "  ", "\t", "    ", "          "}
+
+		for _, indent := range indents {
+			result := IndentLines(input, indent)
+
+			// Result should be a valid string
+			// Verify that empty input returns empty (or only indent)
+			if input == "" {
+				// Empty input should give empty output
+				if result != "" {
+					t.Errorf("empty input should give empty output, got %q", result)
+				}
+			}
+		}
+	})
+}

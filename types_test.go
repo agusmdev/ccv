@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -1527,4 +1528,127 @@ func TestStreamState_CurrentIndex(t *testing.T) {
 	if stream.CurrentIndex != 0 {
 		t.Errorf("expected CurrentIndex 0 after Reset, got %d", stream.CurrentIndex)
 	}
+}
+
+// FuzzParseMessage tests ParseMessage with random byte input
+func FuzzParseMessage(f *testing.F) {
+	// Seed corpus from existing valid test cases
+	f.Add([]byte(`{"type":"system","subtype":"init","session_id":"test"}`))
+	f.Add([]byte(`{"type":"assistant","message":{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hello"}]}}`))
+	f.Add([]byte(`{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.05}`))
+	f.Add([]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`))
+	f.Add([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"input"}]}}`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`{"type":"unknown_type","field":"value"}`))
+	f.Add([]byte(`"simple string"`))
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`{"type":"compact_boundary","subtype":"context_trim","session_id":"test-123"}`))
+	f.Add([]byte(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}}`))
+
+	// Add edge cases
+	f.Add([]byte(""))
+	f.Add([]byte("{"))
+	f.Add([]byte("}"))
+	f.Add([]byte(`{"type":"`))
+	f.Add([]byte(`{"type":"system","subtype":"init","session_id":"`)) // incomplete
+
+	// Add special characters
+	f.Add([]byte(`{"type":"system","subtype":"init","session_id":"test\n\x00\x1f"}`))
+	f.Add([]byte(`{"type":"system","subtype":"init","session_id":"test\"quotes\""}`))
+
+	// Add deeply nested JSON (potential stack overflow)
+	deepJSON := []byte(`{"type":"assistant","message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"nested":{`)
+	for i := 0; i < 100; i++ {
+		deepJSON = append(deepJSON, `"field`...)
+		deepJSON = append(deepJSON, []byte(fmt.Sprintf("%d", i))...)
+		deepJSON = append(deepJSON, `":{`...)
+	}
+	for i := 0; i < 100; i++ {
+		deepJSON = append(deepJSON, `}}`...)
+	}
+	deepJSON = append(deepJSON, `}}`...)
+	f.Add(deepJSON)
+
+	// Add extremely long line (1MB+)
+	longJSON := make([]byte, 0, 1024*1024+100)
+	longJSON = append(longJSON, `{"type":"assistant","message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"`...)
+	for i := 0; i < 1024*1024; i++ {
+		longJSON = append(longJSON, 'a')
+	}
+	longJSON = append(longJSON, `"}]}}`...)
+	f.Add(longJSON)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// ParseMessage should never panic, even with completely invalid input
+		// The panic recovery inside ParseMessage should catch any panics
+		result, err := ParseMessage(data)
+
+		// If we got a result without error, verify it's not nil
+		if err == nil && result == nil {
+			t.Error("ParseMessage returned nil result with nil error")
+		}
+
+		// The result should be one of the known types or BaseMessage
+		if result != nil {
+			switch result.(type) {
+			case *SystemInit, *AssistantMessage, *UserMessage, *Result, *CompactBoundary,
+				*StreamEvent, *StreamEventWrapper, *BaseMessage:
+				// Valid types
+			default:
+				// Unknown type - should be BaseMessage at minimum
+				if _, ok := result.(*BaseMessage); !ok {
+					t.Errorf("ParseMessage returned unexpected type: %T", result)
+				}
+			}
+		}
+	})
+}
+
+// FuzzToolUseResult_UnmarshalJSON tests ToolUseResult unmarshaling with random input
+func FuzzToolUseResult_UnmarshalJSON(f *testing.F) {
+	// Seed corpus with valid cases
+	f.Add([]byte(`"simple string result"`))
+	f.Add([]byte(`{"stdout":"output text","stderr":"error text","interrupted":true,"isImage":false}`))
+	f.Add([]byte(`{"stdout":"only stdout"}`))
+	f.Add([]byte(`{"stderr":"error message"}`))
+	f.Add([]byte(`""`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`null`))
+
+	// Add special characters
+	f.Add([]byte(`{"stdout":"Line 1\nLine \"quoted\"\nLine 3"}`))
+	f.Add([]byte(`"C:\\Users\\test\\file.txt"`))
+	f.Add([]byte(`{"stderr":"Error: 错误 \U0001F4A3"}`))
+
+	// Add malformed JSON
+	f.Add([]byte(`{invalid}`))
+	f.Add([]byte(`{`))
+	f.Add([]byte(`}`))
+	f.Add([]byte(`"`)) // incomplete string
+
+	// Add long strings
+	longStr := make([]byte, 0, 100*1024)
+	longStr = append(longStr, `{"stdout":"`...)
+	for i := 0; i < 100*1024; i++ {
+		longStr = append(longStr, 'a')
+	}
+	longStr = append(longStr, `"}`...)
+	f.Add(longStr)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var result ToolUseResult
+		err := result.UnmarshalJSON(data)
+
+		// UnmarshalJSON may fail with invalid JSON, but should never panic
+		// Even with errors, the result should be in a consistent state
+		if err == nil {
+			// If no error, we should have valid data in either RawString or the struct fields
+			if result.RawString == "" && result.Stdout == "" && result.Stderr == "" &&
+				!result.Interrupted && !result.IsImage {
+				// Empty but valid (e.g., {} or "")
+				// This is acceptable
+			}
+		}
+	})
 }
