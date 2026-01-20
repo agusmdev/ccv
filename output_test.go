@@ -737,3 +737,97 @@ func TestProcessContentBlock_ToolUse(t *testing.T) {
 		t.Errorf("expected tool name, got: %q", output)
 	}
 }
+
+func TestPrintToolCall_EnterPlanMode(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_enter_plan", "EnterPlanMode", map[string]interface{}{})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "[PLAN MODE]") {
+		t.Errorf("expected '[PLAN MODE]' indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Entering plan mode") {
+		t.Errorf("expected 'Entering plan mode' message, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_ExitPlanMode_Basic(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_exit_plan", "ExitPlanMode", map[string]interface{}{})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "[PLAN MODE]") {
+		t.Errorf("expected '[PLAN MODE]' indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Exiting plan mode") {
+		t.Errorf("expected 'Exiting plan mode' message, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_ExitPlanMode_WithPermissions(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_exit_plan", "ExitPlanMode", map[string]interface{}{
+		"allowedPrompts": []interface{}{
+			map[string]interface{}{
+				"tool":   "Bash",
+				"prompt": "run tests",
+			},
+			map[string]interface{}{
+				"tool":   "Bash",
+				"prompt": "build the project",
+			},
+		},
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "[PLAN MODE]") {
+		t.Errorf("expected '[PLAN MODE]' indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Requested permissions") {
+		t.Errorf("expected 'Requested permissions', got: %q", output)
+	}
+	if !strings.Contains(output, "Bash:") {
+		t.Errorf("expected 'Bash:' permission label, got: %q", output)
+	}
+	if !strings.Contains(output, "run tests") {
+		t.Errorf("expected 'run tests' permission, got: %q", output)
+	}
+	if !strings.Contains(output, "build the project") {
+		t.Errorf("expected 'build the project' permission, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_ExitPlanMode_WithRemoteSync(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_exit_plan", "ExitPlanMode", map[string]interface{}{
+		"pushToRemote":     true,
+		"remoteSessionId":  "session-abc-123",
+		"remoteSessionUrl": "https://claude.ai/session/abc-123",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "[PLAN MODE]") {
+		t.Errorf("expected '[PLAN MODE]' indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "Remote sync") {
+		t.Errorf("expected 'Remote sync' indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "session-abc-123") {
+		t.Errorf("expected session ID, got: %q", output)
+	}
+	if !strings.Contains(output, "https://claude.ai/session/abc-123") {
+		t.Errorf("expected session URL, got: %q", output)
+	}
+}

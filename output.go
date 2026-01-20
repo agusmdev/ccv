@@ -996,6 +996,44 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle EnterPlanMode tool specially - display plan mode entry
+	if toolCall.Name == "EnterPlanMode" {
+		fmt.Fprintf(p.writer, "%s→%s %s[PLAN MODE]%s Entering plan mode\n", c.ToolArrow, c.Reset, c.ValueBright, c.Reset)
+		return
+	}
+
+	// Handle ExitPlanMode tool specially - display plan status and requested permissions
+	if toolCall.Name == "ExitPlanMode" {
+		fmt.Fprintf(p.writer, "%s→%s %s[PLAN MODE]%s Exiting plan mode\n", c.ToolArrow, c.Reset, c.ValueBright, c.Reset)
+
+		// Show requested permissions if present
+		if allowedPrompts, ok := inputMap["allowedPrompts"].([]interface{}); ok && len(allowedPrompts) > 0 {
+			fmt.Fprintf(p.writer, "  %sRequested permissions:%s\n", c.LabelDim, c.Reset)
+			for _, promptRaw := range allowedPrompts {
+				if promptMap, ok := promptRaw.(map[string]interface{}); ok {
+					if tool, ok := promptMap["tool"].(string); ok {
+						if prompt, ok := promptMap["prompt"].(string); ok {
+							fmt.Fprintf(p.writer, "    %s%s:%s %s\n", c.ToolName, tool, c.Reset, prompt)
+						}
+					}
+				}
+			}
+		}
+
+		// Show remote push info if present
+		if pushToRemote, ok := inputMap["pushToRemote"].(bool); ok && pushToRemote {
+			fmt.Fprintf(p.writer, "  %sRemote sync:%s enabled\n", c.LabelDim, c.Reset)
+			if sessionID, ok := inputMap["remoteSessionId"].(string); ok && sessionID != "" {
+				fmt.Fprintf(p.writer, "    %sSession ID:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, sessionID, c.Reset)
+			}
+			if sessionURL, ok := inputMap["remoteSessionUrl"].(string); ok && sessionURL != "" {
+				fmt.Fprintf(p.writer, "    %sSession URL:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, sessionURL, c.Reset)
+			}
+		}
+
+		return
+	}
+
 	// Default rendering for other tools
 	description := ""
 	if desc, ok := inputMap["description"].(string); ok {
