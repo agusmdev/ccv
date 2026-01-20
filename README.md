@@ -93,10 +93,10 @@ ccv "Explain this codebase"
 
 ### With Claude Code Arguments
 
-Use `--` to pass arguments directly to the underlying Claude Code CLI:
+Pass Claude Code arguments directly - CCV filters its own flags and passes everything else through:
 
 ```bash
-ccv -- -p "Fix the bug" --allowedTools Bash,Read
+ccv -p "Fix the bug" --allowedTools Bash,Read
 ```
 
 ### Output Modes
@@ -145,7 +145,7 @@ ccv "Analyze the architecture of this project"
 
 Debug with specific tools:
 ```bash
-ccv -- -p "Debug the authentication flow" --allowedTools Read,Grep
+ccv -p "Debug the authentication flow" --allowedTools Read,Grep
 ```
 
 Get help:
