@@ -356,6 +356,78 @@ func TestPrintToolCall_Task(t *testing.T) {
 	if !strings.Contains(output, "Task") {
 		t.Errorf("expected tool name 'Task', got: %q", output)
 	}
+	if !strings.Contains(output, "[Explore]") {
+		t.Errorf("expected subagent type '[Explore]', got: %q", output)
+	}
+	if !strings.Contains(output, "Explore codebase") {
+		t.Errorf("expected description 'Explore codebase', got: %q", output)
+	}
+}
+
+func TestPrintToolCall_TaskWithModel(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_9", "Task", map[string]interface{}{
+		"description":   "Quick search task",
+		"subagent_type": "Explore",
+		"model":         "haiku",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "Task") {
+		t.Errorf("expected tool name 'Task', got: %q", output)
+	}
+	if !strings.Contains(output, "haiku") {
+		t.Errorf("expected model 'haiku', got: %q", output)
+	}
+}
+
+func TestPrintToolCall_TaskInBackground(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_10", "Task", map[string]interface{}{
+		"description":       "Long running task",
+		"subagent_type":     "general-purpose",
+		"run_in_background": true,
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "Task") {
+		t.Errorf("expected tool name 'Task', got: %q", output)
+	}
+	if !strings.Contains(output, "Background") {
+		t.Errorf("expected background flag, got: %q", output)
+	}
+	if !strings.Contains(output, "running") {
+		t.Errorf("expected 'running' for background flag, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_TaskWithMaxTurns(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_11", "Task", map[string]interface{}{
+		"description":   "Plan architecture",
+		"subagent_type": "Plan",
+		"max_turns":     50.0,
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	if !strings.Contains(output, "Task") {
+		t.Errorf("expected tool name 'Task', got: %q", output)
+	}
+	if !strings.Contains(output, "Max turns") {
+		t.Errorf("expected max_turns indicator, got: %q", output)
+	}
+	if !strings.Contains(output, "50") {
+		t.Errorf("expected '50' for max_turns, got: %q", output)
+	}
 }
 
 func TestProcessToolResult_Bash(t *testing.T) {

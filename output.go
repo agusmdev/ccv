@@ -802,6 +802,51 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle Task tool specially - display subagent type, description, model, and background flag
+	if toolCall.Name == "Task" {
+		subagentType := ""
+		if st, ok := inputMap["subagent_type"].(string); ok {
+			subagentType = st
+		}
+
+		description := ""
+		if desc, ok := inputMap["description"].(string); ok {
+			description = desc
+		}
+
+		// Build the output line
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset)
+
+		// Show subagent type if present
+		if subagentType != "" {
+			fmt.Fprintf(p.writer, " [%s]", subagentType)
+		}
+
+		// Show description if present
+		if description != "" {
+			fmt.Fprintf(p.writer, ": %s", description)
+		}
+
+		fmt.Fprintln(p.writer)
+
+		// Show model override if present
+		if model, ok := inputMap["model"].(string); ok && model != "" {
+			fmt.Fprintf(p.writer, "  %sModel:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, model, c.Reset)
+		}
+
+		// Show background flag if true
+		if runInBackground, ok := inputMap["run_in_background"].(bool); ok && runInBackground {
+			fmt.Fprintf(p.writer, "  %sBackground:%s %srunning%s\n", c.LabelDim, c.Reset, c.LabelDim, c.Reset)
+		}
+
+		// Show max_turns if present
+		if maxTurns, ok := inputMap["max_turns"].(float64); ok && maxTurns > 0 {
+			fmt.Fprintf(p.writer, "  %sMax turns:%s %s%.0f%s\n", c.LabelDim, c.Reset, c.ValueBright, maxTurns, c.Reset)
+		}
+
+		return
+	}
+
 	// Default rendering for other tools
 	description := ""
 	if desc, ok := inputMap["description"].(string); ok {
