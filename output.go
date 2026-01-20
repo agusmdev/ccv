@@ -277,6 +277,16 @@ func (p *OutputProcessor) processContentBlock(block *ContentBlock) {
 	}
 }
 
+// toolResultHandler handles the output for a specific tool result type
+type toolResultHandler func(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock)
+
+// toolResultHandlers maps tool names to their result handlers
+var toolResultHandlers = map[string]toolResultHandler{
+	"Bash": handleBashResult,
+	"Glob": handleGlobResult,
+	"Grep": handleGrepResult,
+}
+
 // processToolResult processes a tool result
 func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 	p.state.CompleteToolCall(block.ToolUseID, block.Content, block.IsError)
@@ -308,84 +318,95 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 		}
 	}
 
-	// Handle Bash tool results specially - always show output
-	c := p.colors
-	if toolCall.Name == "Bash" {
-		if block.Content != "" {
-			// Indent and display output, preserving ANSI colors
-			lines := strings.Split(block.Content, "\n")
-			for _, line := range lines {
-				// Show all lines, even empty ones, to preserve output structure
-				fmt.Fprintf(p.writer, "  %s\n", line)
-			}
-		}
-
-		// Show error indicator if it failed
-		if block.IsError {
-			fmt.Fprintf(p.writer, "  %s✗ Command failed%s\n", c.Error, c.Reset)
-		}
-		return
-	}
-
-	// Handle Glob tool results - show file paths found
-	if toolCall.Name == "Glob" {
-		if block.Content != "" {
-			lines := strings.Split(block.Content, "\n")
-			fileCount := 0
-			for _, line := range lines {
-				// Skip empty lines
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				fmt.Fprintf(p.writer, "  %s%s%s\n", c.FilePath, line, c.Reset)
-				fileCount++
-			}
-
-			// Show count summary if no files or error
-			if fileCount == 0 && !block.IsError {
-				fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
-			}
-		} else if !block.IsError {
-			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
-		}
-
-		if block.IsError {
-			fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
-		}
-		return
-	}
-
-	// Handle Grep tool results - show matches with file:line format
-	if toolCall.Name == "Grep" {
-		if block.Content != "" {
-			lines := strings.Split(block.Content, "\n")
-			matchCount := 0
-			for _, line := range lines {
-				// Skip empty lines
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				fmt.Fprintf(p.writer, "  %s\n", line)
-				matchCount++
-			}
-
-			// Show count summary if no matches or error
-			if matchCount == 0 && !block.IsError {
-				fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
-			}
-		} else if !block.IsError {
-			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
-		}
-
-		if block.IsError {
-			fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
-		}
+	// Dispatch to tool-specific handler if available
+	if handler, exists := toolResultHandlers[toolCall.Name]; exists {
+		handler(p, toolCall, block)
 		return
 	}
 
 	// Default handling for other tools (including Read/Write)
 	// Note: tool_result blocks are not streamed by claude CLI, so this
 	// is mainly for any future tools that do expose results
+	handleDefaultResult(p, toolCall, block)
+}
+
+// handleBashResult handles Bash tool results - always show output
+func handleBashResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.Content != "" {
+		// Indent and display output, preserving ANSI colors
+		lines := strings.Split(block.Content, "\n")
+		for _, line := range lines {
+			// Show all lines, even empty ones, to preserve output structure
+			fmt.Fprintf(p.writer, "  %s\n", line)
+		}
+	}
+
+	// Show error indicator if it failed
+	if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Command failed%s\n", c.Error, c.Reset)
+	}
+}
+
+// handleGlobResult handles Glob tool results - show file paths found
+func handleGlobResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.Content != "" {
+		lines := strings.Split(block.Content, "\n")
+		fileCount := 0
+		for _, line := range lines {
+			// Skip empty lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			fmt.Fprintf(p.writer, "  %s%s%s\n", c.FilePath, line, c.Reset)
+			fileCount++
+		}
+
+		// Show count summary if no files or error
+		if fileCount == 0 && !block.IsError {
+			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
+		}
+	} else if !block.IsError {
+		fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
+	}
+
+	if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
+	}
+}
+
+// handleGrepResult handles Grep tool results - show matches with file:line format
+func handleGrepResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
+	if block.Content != "" {
+		lines := strings.Split(block.Content, "\n")
+		matchCount := 0
+		for _, line := range lines {
+			// Skip empty lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			fmt.Fprintf(p.writer, "  %s\n", line)
+			matchCount++
+		}
+
+		// Show count summary if no matches or error
+		if matchCount == 0 && !block.IsError {
+			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
+		}
+	} else if !block.IsError {
+		fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
+	}
+
+	if block.IsError {
+		fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
+	}
+}
+
+// handleDefaultResult handles tool results for tools without specific handlers
+func handleDefaultResult(p *OutputProcessor, toolCall *ToolCall, block *ContentBlock) {
+	c := p.colors
 	statusColor := c.Success
 	status := "✓"
 	if block.IsError {
