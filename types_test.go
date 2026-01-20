@@ -578,3 +578,203 @@ func TestAppState_CompleteToolCall_NonExistent(t *testing.T) {
 		t.Error("completing non-existent tool should not create entry")
 	}
 }
+
+func TestAppState_AddOrUpdateToolCall_NilCurrentAgent(t *testing.T) {
+	state := NewAppState()
+	state.InitializeSession(&SystemInit{SessionID: "test"})
+
+	// Set CurrentAgent to nil
+	state.CurrentAgent = nil
+
+	toolCall := &ToolCall{
+		ID:     "tool_123",
+		Name:   "Read",
+		Status: ToolCallStatusPending,
+	}
+
+	// Should not panic when CurrentAgent is nil
+	state.AddOrUpdateToolCall(toolCall)
+
+	// Tool should still be added to PendingTools
+	if _, ok := state.PendingTools["tool_123"]; !ok {
+		t.Error("expected tool call to be in pending tools even with nil CurrentAgent")
+	}
+}
+
+func TestAppState_AddOrUpdateToolCall_UpdateExisting(t *testing.T) {
+	state := NewAppState()
+	state.InitializeSession(&SystemInit{SessionID: "test"})
+
+	// Add initial tool call
+	toolCall := &ToolCall{
+		ID:     "tool_123",
+		Name:   "Read",
+		Status: ToolCallStatusPending,
+	}
+	state.AddOrUpdateToolCall(toolCall)
+
+	// Update the same tool call
+	updatedCall := &ToolCall{
+		ID:     "tool_123",
+		Name:   "Read",
+		Status: ToolCallStatusRunning,
+	}
+	state.AddOrUpdateToolCall(updatedCall)
+
+	// Verify it was updated in PendingTools
+	tc := state.PendingTools["tool_123"]
+	if tc.Status != ToolCallStatusRunning {
+		t.Errorf("expected status 'running', got '%s'", tc.Status)
+	}
+
+	// Verify it was updated in CurrentAgent's ToolCalls
+	if len(state.CurrentAgent.ToolCalls) != 1 {
+		t.Errorf("expected 1 tool call in current agent, got %d", len(state.CurrentAgent.ToolCalls))
+	}
+	if state.CurrentAgent.ToolCalls[0].Status != ToolCallStatusRunning {
+		t.Errorf("expected agent tool call status 'running', got '%s'", state.CurrentAgent.ToolCalls[0].Status)
+	}
+}
+
+func TestAppState_CreateChildAgent_NilRootAgent(t *testing.T) {
+	state := NewAppState()
+	// Don't initialize session, so RootAgent will be nil
+
+	child := state.CreateChildAgent("tool_1", "Explore", "Exploring codebase")
+
+	// Should not panic when RootAgent is nil
+	if child == nil {
+		t.Fatal("expected non-nil child agent even with nil RootAgent")
+	}
+	// When RootAgent is nil, CreateChildAgent will use RootAgent as parent
+	// which defaults to nil, so child should be created with nil parent
+	if child.ID != "tool_1" {
+		t.Errorf("expected ID 'tool_1', got '%s'", child.ID)
+	}
+}
+
+func TestParseMessage_StreamEventTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		json    string
+		wantErr bool
+	}{
+		{
+			name:    "message_start event",
+			json:    `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}}`,
+			wantErr: false,
+		},
+		{
+			name:    "content_block_start event",
+			json:    `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			wantErr: false,
+		},
+		{
+			name:    "content_block_stop event",
+			json:    `{"type":"content_block_stop","index":0}`,
+			wantErr: false,
+		},
+		{
+			name:    "message_delta event",
+			json:    `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":5}}`,
+			wantErr: false,
+		},
+		{
+			name:    "message_stop event",
+			json:    `{"type":"message_stop"}`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := ParseMessage([]byte(tt.json))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseMessage() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				event, ok := msg.(*StreamEvent)
+				if !ok {
+					t.Errorf("ParseMessage() returned %T, want *StreamEvent", msg)
+				} else {
+					// Verify the Type field matches expected
+					if event.Type == "" {
+						t.Error("ParseMessage() StreamEvent has empty Type")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestParseMessage_UnmarshalError(t *testing.T) {
+	tests := []struct {
+		name       string
+		json       string
+		wantTypeIn string // The type field that should be parsed even if inner unmarshal fails
+	}{
+		{
+			name:       "system message with invalid inner structure",
+			json:       `{"type":"system","subtype":"init","session_id":123}`,
+			wantTypeIn: "system",
+		},
+		{
+			name:       "assistant message with invalid content",
+			json:       `{"type":"assistant","message":"invalid"}`,
+			wantTypeIn: "assistant",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// These should error during unmarshal
+			_, err := ParseMessage([]byte(tt.json))
+			if err == nil {
+				t.Error("ParseMessage() expected error for invalid JSON structure, got nil")
+			}
+		})
+	}
+}
+
+func TestParseMessage_StreamEventWrapperWithNilEvent(t *testing.T) {
+	// Test stream_event wrapper with nil event
+	data := []byte(`{"type":"stream_event","event":null,"session_id":"test"}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	// Should return the wrapper itself when event is nil
+	wrapper, ok := msg.(*StreamEventWrapper)
+	if !ok {
+		t.Fatalf("expected *StreamEventWrapper with nil event, got %T", msg)
+	}
+	if wrapper.Event != nil {
+		t.Error("expected nil Event")
+	}
+}
+
+func TestParseMessage_UserMessage(t *testing.T) {
+	data := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"user input"}]},"session_id":"sess-1"}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	user, ok := msg.(*UserMessage)
+	if !ok {
+		t.Fatalf("expected *UserMessage, got %T", msg)
+	}
+	if user.Type != "user" {
+		t.Errorf("expected type 'user', got '%s'", user.Type)
+	}
+	if user.SessionID != "sess-1" {
+		t.Errorf("expected session_id 'sess-1', got '%s'", user.SessionID)
+	}
+	if len(user.Message.Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(user.Message.Content))
+	}
+}

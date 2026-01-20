@@ -171,3 +171,149 @@ type testError struct {
 func (e *testError) Error() string {
 	return e.message
 }
+
+// mockWriteCloser implements io.WriteCloser for testing
+type mockWriteCloser struct {
+	writeFunc func([]byte) (int, error)
+	closeFunc func() error
+	closed    bool
+}
+
+func (m *mockWriteCloser) Write(p []byte) (int, error) {
+	if m.writeFunc != nil {
+		return m.writeFunc(p)
+	}
+	return len(p), nil
+}
+
+func (m *mockWriteCloser) Close() error {
+	m.closed = true
+	if m.closeFunc != nil {
+		return m.closeFunc()
+	}
+	return nil
+}
+
+func TestClaudeRunner_Wait(t *testing.T) {
+	// Test Wait() - it waits for all goroutines to complete
+	// We can't easily test the full behavior without mocking, but we can
+	// verify the method exists and doesn't panic when called on a nil runner
+
+	t.Run("Wait on nil runner does not panic", func(t *testing.T) {
+		// This verifies the method is safe to call
+		// In real usage, Wait() is called after Start() and waits for goroutines
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Wait() panicked: %v", r)
+			}
+		}()
+
+		// Create a minimal runner just to test the Wait method signature
+		runner := &ClaudeRunner{}
+		runner.Wait() // Should not panic even with uninitialized runner
+	})
+}
+
+func TestClaudeRunner_Stop(t *testing.T) {
+	t.Run("Stop calls cancel and Wait", func(t *testing.T) {
+		cancelCalled := false
+		waitCalled := false
+
+		// Create a mock runner with controlled behavior
+		runner := &ClaudeRunner{
+			cancel: func() {
+				cancelCalled = true
+			},
+		}
+
+		// Override Wait to track if it's called
+		originalWait := runner.Wait
+		runner.Wait = func() {
+			waitCalled = true
+			originalWait()
+		}
+
+		runner.Stop()
+
+		if !cancelCalled {
+			t.Error("Stop() should call cancel")
+		}
+		if !waitCalled {
+			t.Error("Stop() should call Wait")
+		}
+	})
+
+	t.Run("Stop with nil cancel does not panic", func(t *testing.T) {
+		runner := &ClaudeRunner{}
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Stop() with nil cancel panicked: %v", r)
+			}
+		}()
+		runner.Stop()
+	})
+}
+
+func TestClaudeRunner_WriteInput(t *testing.T) {
+	t.Run("WriteInput writes to stdin", func(t *testing.T) {
+		writeData := []byte("test input")
+		writeCalled := false
+		var writtenData []byte
+
+		mockStdin := &mockWriteCloser{
+			writeFunc: func(p []byte) (int, error) {
+				writeCalled = true
+				writtenData = append([]byte{}, p...)
+				return len(p), nil
+			},
+		}
+
+		runner := &ClaudeRunner{
+			stdin: mockStdin,
+		}
+
+		err := runner.WriteInput(writeData)
+
+		if err != nil {
+			t.Errorf("WriteInput() returned unexpected error: %v", err)
+		}
+		if !writeCalled {
+			t.Error("WriteInput() should write to stdin")
+		}
+		if string(writtenData) != string(writeData) {
+			t.Errorf("WriteInput() wrote %q, want %q", string(writtenData), string(writeData))
+		}
+	})
+
+	t.Run("WriteInput returns error from stdin", func(t *testing.T) {
+		expectedErr := &testError{message: "write failed"}
+
+		mockStdin := &mockWriteCloser{
+			writeFunc: func(p []byte) (int, error) {
+				return 0, expectedErr
+			},
+		}
+
+		runner := &ClaudeRunner{
+			stdin: mockStdin,
+		}
+
+		err := runner.WriteInput([]byte("test"))
+
+		if err != expectedErr {
+			t.Errorf("WriteInput() should return stdin error, got: %v", err)
+		}
+	})
+
+	t.Run("WriteInput with nil stdin returns error", func(t *testing.T) {
+		runner := &ClaudeRunner{
+			stdin: nil,
+		}
+
+		err := runner.WriteInput([]byte("test"))
+
+		if err == nil {
+			t.Error("WriteInput() with nil stdin should return an error")
+		}
+	})
+}
