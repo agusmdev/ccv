@@ -554,6 +554,22 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle Skill tool specially - display skill name (e.g., /commit, /review-pr)
+	if toolCall.Name == "Skill" {
+		if skillName, ok := inputMap["skill"].(string); ok {
+			// Format as /skill-name for consistency with how users invoke skills
+			displayName := fmt.Sprintf("/%s", skillName)
+
+			// Include args if provided
+			if args, ok := inputMap["args"].(string); ok && args != "" {
+				fmt.Fprintf(p.writer, "%s→%s %s%s%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset, c.LabelDim, args, c.Reset)
+			} else {
+				fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+			}
+			return
+		}
+	}
+
 	// Default rendering for other tools
 	description := ""
 	if desc, ok := inputMap["description"].(string); ok {
