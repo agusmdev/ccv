@@ -24,7 +24,8 @@ type OutputProcessor struct {
 	mode   OutputMode
 	writer io.Writer
 	state  *AppState
-	result *Result // Final result with cost, duration, turns
+	result *Result       // Final result with cost, duration, turns
+	colors *ColorScheme  // Terminal color scheme
 }
 
 // NewOutputProcessor creates a new output processor
@@ -43,6 +44,7 @@ func NewOutputProcessor(format string, verbose bool, quiet bool) *OutputProcesso
 		mode:   mode,
 		writer: os.Stdout,
 		state:  NewAppState(),
+		colors: GetScheme(),
 	}
 }
 
@@ -98,7 +100,8 @@ func (p *OutputProcessor) handleSystemInit(msg *SystemInit) {
 		return
 	}
 
-	fmt.Fprintf(p.writer, "[Session started: %s]\n", msg.Model)
+	c := p.colors
+	fmt.Fprintf(p.writer, "%s[Session started: %s]%s\n", c.SessionInfo, msg.Model, c.Reset)
 	// Show initial agent state
 	p.printAgentContext()
 }
@@ -130,6 +133,11 @@ func (p *OutputProcessor) handleStreamEvent(event *StreamEvent) {
 
 	case StreamEventContentBlockStop:
 		// Content block finished streaming
+		// Reset colors after thinking blocks
+		if p.state.Stream.PartialThinking != "" {
+			fmt.Fprint(p.writer, p.colors.Reset)
+			fmt.Fprintln(p.writer)
+		}
 
 	case StreamEventMessageDelta:
 		// Update usage if provided
@@ -207,9 +215,10 @@ func (p *OutputProcessor) handleContentBlockDelta(event *StreamEvent) {
 		p.state.AppendStreamThinking(delta.Thinking)
 
 		if p.mode != OutputModeQuiet {
+			c := p.colors
 			// First thinking chunk - print prefix
 			if p.state.Stream.PartialThinking == delta.Thinking {
-				fmt.Fprint(p.writer, "[THINKING] ")
+				fmt.Fprintf(p.writer, "%s[THINKING]%s %s", c.ThinkingPrefix, c.Reset, c.ThinkingText)
 			}
 			fmt.Fprint(p.writer, delta.Thinking)
 		}
@@ -233,7 +242,8 @@ func (p *OutputProcessor) processContentBlock(block *ContentBlock) {
 
 	case ContentBlockTypeThinking:
 		if p.mode != OutputModeQuiet {
-			fmt.Fprintf(p.writer, "[THINKING] %s\n", block.Thinking)
+			c := p.colors
+			fmt.Fprintf(p.writer, "%s[THINKING]%s %s%s%s\n", c.ThinkingPrefix, c.Reset, c.ThinkingText, block.Thinking, c.Reset)
 		}
 
 	case ContentBlockTypeToolUse:
@@ -290,6 +300,7 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 	}
 
 	// Handle Bash tool results specially - always show output
+	c := p.colors
 	if toolCall.Name == "Bash" {
 		if block.Content != "" {
 			// Indent and display output, preserving ANSI colors
@@ -302,7 +313,7 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 
 		// Show error indicator if it failed
 		if block.IsError {
-			fmt.Fprintf(p.writer, "  ✗ Command failed\n")
+			fmt.Fprintf(p.writer, "  %s✗ Command failed%s\n", c.Error, c.Reset)
 		}
 		return
 	}
@@ -317,20 +328,20 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 				if strings.TrimSpace(line) == "" {
 					continue
 				}
-				fmt.Fprintf(p.writer, "  %s\n", line)
+				fmt.Fprintf(p.writer, "  %s%s%s\n", c.FilePath, line, c.Reset)
 				fileCount++
 			}
 
 			// Show count summary if no files or error
 			if fileCount == 0 && !block.IsError {
-				fmt.Fprintf(p.writer, "  (no matches)\n")
+				fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
 			}
 		} else if !block.IsError {
-			fmt.Fprintf(p.writer, "  (no matches)\n")
+			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
 		}
 
 		if block.IsError {
-			fmt.Fprintf(p.writer, "  ✗ Search failed\n")
+			fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
 		}
 		return
 	}
@@ -351,14 +362,14 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 
 			// Show count summary if no matches or error
 			if matchCount == 0 && !block.IsError {
-				fmt.Fprintf(p.writer, "  (no matches)\n")
+				fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
 			}
 		} else if !block.IsError {
-			fmt.Fprintf(p.writer, "  (no matches)\n")
+			fmt.Fprintf(p.writer, "  %s(no matches)%s\n", c.LabelDim, c.Reset)
 		}
 
 		if block.IsError {
-			fmt.Fprintf(p.writer, "  ✗ Search failed\n")
+			fmt.Fprintf(p.writer, "  %s✗ Search failed%s\n", c.Error, c.Reset)
 		}
 		return
 	}
@@ -366,12 +377,14 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 	// Default handling for other tools (including Read/Write)
 	// Note: tool_result blocks are not streamed by claude CLI, so this
 	// is mainly for any future tools that do expose results
+	statusColor := c.Success
 	status := "✓"
 	if block.IsError {
+		statusColor = c.Error
 		status = "✗"
 	}
 
-	fmt.Fprintf(p.writer, "  %s %s completed\n", status, toolCall.Name)
+	fmt.Fprintf(p.writer, "  %s%s%s %s completed\n", statusColor, status, c.Reset, toolCall.Name)
 
 	// Show result in verbose mode
 	if p.mode == OutputModeVerbose && block.Content != "" {
@@ -387,6 +400,8 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 
 // printDiff prints a unified diff-style output for Edit operations
 func (p *OutputProcessor) printDiff(oldStr, newStr string) {
+	c := p.colors
+
 	// Split into lines for diff display
 	oldLines := strings.Split(oldStr, "\n")
 	newLines := strings.Split(newStr, "\n")
@@ -401,17 +416,19 @@ func (p *OutputProcessor) printDiff(oldStr, newStr string) {
 
 	// Print removed lines (old)
 	for _, line := range oldLines {
-		fmt.Fprintf(p.writer, "  - %s\n", line)
+		fmt.Fprintf(p.writer, "  %s- %s%s\n", c.DiffRemove, line, c.Reset)
 	}
 
 	// Print added lines (new)
 	for _, line := range newLines {
-		fmt.Fprintf(p.writer, "  + %s\n", line)
+		fmt.Fprintf(p.writer, "  %s+ %s%s\n", c.DiffAdd, line, c.Reset)
 	}
 }
 
 // printToolCall prints a tool call
 func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
+	c := p.colors
+
 	// Parse input to extract parameters
 	var inputMap map[string]interface{}
 	if len(toolCall.Input) > 0 {
@@ -422,12 +439,12 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	if toolCall.Name == "Bash" {
 		if command, ok := inputMap["command"].(string); ok {
 			// Show command as the primary info
-			fmt.Fprintf(p.writer, "→ Bash: %s\n", command)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, command)
 
 			// In verbose mode, also show description if available
 			if p.mode == OutputModeVerbose {
 				if desc, ok := inputMap["description"].(string); ok && desc != "" {
-					fmt.Fprintf(p.writer, "  Description: %s\n", desc)
+					fmt.Fprintf(p.writer, "  %sDescription:%s %s\n", c.LabelDim, c.Reset, desc)
 				}
 			}
 			return
@@ -437,7 +454,7 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Handle Read tool specially
 	if toolCall.Name == "Read" {
 		if filePath, ok := inputMap["file_path"].(string); ok {
-			fmt.Fprintf(p.writer, "→ Read: %s\n", filePath)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, filePath, c.Reset)
 			return
 		}
 	}
@@ -456,9 +473,9 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 			}
 
 			if lineCount > 0 {
-				fmt.Fprintf(p.writer, "→ Write: %s (%d lines)\n", filePath, lineCount)
+				fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s %s(%d lines)%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, filePath, c.Reset, c.LabelDim, lineCount, c.Reset)
 			} else {
-				fmt.Fprintf(p.writer, "→ Write: %s\n", filePath)
+				fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, filePath, c.Reset)
 			}
 			return
 		}
@@ -467,7 +484,7 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Handle Edit tool specially
 	if toolCall.Name == "Edit" {
 		if filePath, ok := inputMap["file_path"].(string); ok {
-			fmt.Fprintf(p.writer, "→ Edit: %s\n", filePath)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, filePath, c.Reset)
 
 			// Show diff if we have old and new strings
 			oldStr, hasOld := inputMap["old_string"].(string)
@@ -483,7 +500,7 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Handle MultiEdit tool specially
 	if toolCall.Name == "MultiEdit" {
 		if filePath, ok := inputMap["file_path"].(string); ok {
-			fmt.Fprintf(p.writer, "→ MultiEdit: %s\n", filePath)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, filePath, c.Reset)
 
 			// Show diff for each edit if we have edits array
 			if edits, ok := inputMap["edits"].([]interface{}); ok {
@@ -494,7 +511,7 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 
 						if hasOld && hasNew {
 							if i > 0 {
-								fmt.Fprintf(p.writer, "  ---\n")
+								fmt.Fprintf(p.writer, "  %s---%s\n", c.LabelDim, c.Reset)
 							}
 							p.printDiff(oldStr, newStr)
 						}
@@ -508,7 +525,7 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Handle Glob tool specially
 	if toolCall.Name == "Glob" {
 		if pattern, ok := inputMap["pattern"].(string); ok {
-			fmt.Fprintf(p.writer, "→ Glob: %s\n", pattern)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, pattern)
 			return
 		}
 	}
@@ -519,16 +536,16 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 			// Also include any filters or options if present
 			filters := ""
 			if glob, ok := inputMap["glob"].(string); ok && glob != "" {
-				filters += fmt.Sprintf(" [glob: %s]", glob)
+				filters += fmt.Sprintf(" %s[glob: %s]%s", c.LabelDim, glob, c.Reset)
 			}
 			if fileType, ok := inputMap["type"].(string); ok && fileType != "" {
-				filters += fmt.Sprintf(" [type: %s]", fileType)
+				filters += fmt.Sprintf(" %s[type: %s]%s", c.LabelDim, fileType, c.Reset)
 			}
 			if path, ok := inputMap["path"].(string); ok && path != "" && path != "." {
-				filters += fmt.Sprintf(" [path: %s]", path)
+				filters += fmt.Sprintf(" %s[path: %s]%s", c.LabelDim, path, c.Reset)
 			}
 
-			fmt.Fprintf(p.writer, "→ Grep: %s%s\n", pattern, filters)
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, pattern, filters)
 			return
 		}
 	}
@@ -543,9 +560,9 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	statusStr := string(toolCall.Status)
 
 	if description != "" {
-		fmt.Fprintf(p.writer, "→ %s: %s [%s]\n", toolCall.Name, description, statusStr)
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, description, c.ToolStatus, statusStr, c.Reset)
 	} else {
-		fmt.Fprintf(p.writer, "→ %s [%s]\n", toolCall.Name, statusStr)
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s %s[%s]%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.ToolStatus, statusStr, c.Reset)
 	}
 
 	// Show full input in verbose mode
@@ -578,15 +595,17 @@ func (p *OutputProcessor) printAgentContext() {
 		return
 	}
 
+	c := p.colors
+
 	// Create indentation based on depth
 	indent := strings.Repeat("  ", agent.Depth)
 
 	// Format agent context
-	fmt.Fprintf(p.writer, "%s[%s: %s]\n", indent, agent.Type, agent.Status)
+	fmt.Fprintf(p.writer, "%s%s[%s%s%s: %s%s%s]%s\n", indent, c.AgentBrackets, c.AgentType, agent.Type, c.AgentBrackets, c.AgentStatus, agent.Status, c.AgentBrackets, c.Reset)
 
 	// Show description if present and in verbose mode
 	if p.mode == OutputModeVerbose && agent.Description != "" {
-		fmt.Fprintf(p.writer, "%s  %s\n", indent, agent.Description)
+		fmt.Fprintf(p.writer, "%s  %s%s%s\n", indent, c.LabelDim, agent.Description, c.Reset)
 	}
 }
 
@@ -605,8 +624,10 @@ func (p *OutputProcessor) printFinalSummary() {
 		return
 	}
 
+	c := p.colors
+
 	fmt.Fprintln(p.writer)
-	fmt.Fprintf(p.writer, "───────────────────────────────────────\n")
+	fmt.Fprintf(p.writer, "%s───────────────────────────────────────%s\n", c.Separator, c.Reset)
 
 	// Token summary
 	if hasTokens {
@@ -615,19 +636,19 @@ func (p *OutputProcessor) printFinalSummary() {
 			tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens
 		}
 
-		fmt.Fprintf(p.writer, "Tokens: %d total (%d in, %d out)\n",
-			tokens.TotalTokens, tokens.InputTokens, tokens.OutputTokens)
+		fmt.Fprintf(p.writer, "%sTokens:%s %s%d%s total %s(%d in, %d out)%s\n",
+			c.LabelDim, c.Reset, c.ValueBright, tokens.TotalTokens, c.Reset, c.LabelDim, tokens.InputTokens, tokens.OutputTokens, c.Reset)
 
 		// Cache info
 		if tokens.CacheReadInputTokens > 0 || tokens.CacheCreationInputTokens > 0 {
-			fmt.Fprint(p.writer, "Cache: ")
+			fmt.Fprintf(p.writer, "%sCache:%s ", c.LabelDim, c.Reset)
 			if tokens.CacheReadInputTokens > 0 {
-				fmt.Fprintf(p.writer, "%d read", tokens.CacheReadInputTokens)
+				fmt.Fprintf(p.writer, "%s%d%s read", c.ValueBright, tokens.CacheReadInputTokens, c.Reset)
 				if tokens.CacheCreationInputTokens > 0 {
-					fmt.Fprintf(p.writer, ", %d created", tokens.CacheCreationInputTokens)
+					fmt.Fprintf(p.writer, ", %s%d%s created", c.ValueBright, tokens.CacheCreationInputTokens, c.Reset)
 				}
 			} else if tokens.CacheCreationInputTokens > 0 {
-				fmt.Fprintf(p.writer, "%d created", tokens.CacheCreationInputTokens)
+				fmt.Fprintf(p.writer, "%s%d%s created", c.ValueBright, tokens.CacheCreationInputTokens, c.Reset)
 			}
 			fmt.Fprintln(p.writer)
 		}
@@ -637,7 +658,7 @@ func (p *OutputProcessor) printFinalSummary() {
 	if p.result != nil {
 		// Cost
 		if p.result.TotalCost > 0 {
-			fmt.Fprintf(p.writer, "Cost: $%.4f\n", p.result.TotalCost)
+			fmt.Fprintf(p.writer, "%sCost:%s %s$%.4f%s\n", c.LabelDim, c.Reset, c.ValueBright, p.result.TotalCost, c.Reset)
 		}
 
 		// Duration
@@ -647,19 +668,19 @@ func (p *OutputProcessor) printFinalSummary() {
 				// Show as minutes:seconds for durations >= 1 minute
 				mins := duration / 60000
 				secs := (duration % 60000) / 1000
-				fmt.Fprintf(p.writer, "Duration: %dm %ds\n", mins, secs)
+				fmt.Fprintf(p.writer, "%sDuration:%s %s%dm %ds%s\n", c.LabelDim, c.Reset, c.ValueBright, mins, secs, c.Reset)
 			} else if duration >= 1000 {
 				// Show as seconds for durations >= 1 second
-				fmt.Fprintf(p.writer, "Duration: %.1fs\n", float64(duration)/1000)
+				fmt.Fprintf(p.writer, "%sDuration:%s %s%.1fs%s\n", c.LabelDim, c.Reset, c.ValueBright, float64(duration)/1000, c.Reset)
 			} else {
 				// Show as milliseconds for very short durations
-				fmt.Fprintf(p.writer, "Duration: %dms\n", duration)
+				fmt.Fprintf(p.writer, "%sDuration:%s %s%dms%s\n", c.LabelDim, c.Reset, c.ValueBright, duration, c.Reset)
 			}
 		}
 
 		// Turns
 		if p.result.NumTurns > 0 {
-			fmt.Fprintf(p.writer, "Turns: %d\n", p.result.NumTurns)
+			fmt.Fprintf(p.writer, "%sTurns:%s %s%d%s\n", c.LabelDim, c.Reset, c.ValueBright, p.result.NumTurns, c.Reset)
 		}
 	}
 }

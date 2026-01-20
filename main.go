@@ -15,6 +15,9 @@ var (
 )
 
 func main() {
+	// Initialize colors based on terminal capability
+	initColors()
+
 	// Define flags (only --help and --version)
 	showVersion := flag.Bool("version", false, "Show version information")
 	showHelp := flag.Bool("help", false, "Show help information")
