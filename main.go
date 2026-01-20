@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,36 +13,39 @@ var (
 	version = "0.1.0"
 )
 
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "CCV - Claude Code Viewer\n\n")
+	fmt.Fprintf(os.Stderr, "A headless CLI wrapper for Claude Code that outputs structured text.\n\n")
+	fmt.Fprintf(os.Stderr, "Usage:\n")
+	fmt.Fprintf(os.Stderr, "  ccv [options] [prompt]\n")
+	fmt.Fprintf(os.Stderr, "  ccv [options] [claude args...]\n\n")
+	fmt.Fprintf(os.Stderr, "Output Flags:\n")
+	fmt.Fprintf(os.Stderr, "  --verbose        Show verbose output including full tool inputs\n")
+	fmt.Fprintf(os.Stderr, "  --quiet          Show only assistant text responses\n")
+	fmt.Fprintf(os.Stderr, "  --format <fmt>   Output format: text (default), json\n")
+	fmt.Fprintf(os.Stderr, "\nGeneral Flags:\n")
+	fmt.Fprintf(os.Stderr, "  --help           Show help information\n")
+	fmt.Fprintf(os.Stderr, "  --version        Show version information\n")
+	fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+	fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1    Equivalent to --verbose\n")
+	fmt.Fprintf(os.Stderr, "  CCV_QUIET=1      Equivalent to --quiet\n")
+	fmt.Fprintf(os.Stderr, "  CCV_FORMAT=json  Equivalent to --format json\n")
+	fmt.Fprintf(os.Stderr, "\nExamples:\n")
+	fmt.Fprintf(os.Stderr, "  ccv \"Explain this codebase\"\n")
+	fmt.Fprintf(os.Stderr, "  ccv --verbose \"Debug this issue\"\n")
+	fmt.Fprintf(os.Stderr, "  ccv --format json \"List all files\"\n")
+	fmt.Fprintf(os.Stderr, "  ccv -p \"Fix the bug\" --allowedTools Bash,Read\n")
+}
+
 func main() {
 	// Initialize colors based on terminal capability
 	initColors()
 
-	// Define flags (only --help and --version)
-	showVersion := flag.Bool("version", false, "Show version information")
-	showHelp := flag.Bool("help", false, "Show help information")
+	// Manually parse only ccv's own flags to allow passthrough of all other args to claude
+	// This avoids Go's flag package rejecting unknown flags like --model
+	args := os.Args[1:]
 
-	// Custom usage message
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "CCV - Claude Code Viewer\n\n")
-		fmt.Fprintf(os.Stderr, "A headless CLI wrapper for Claude Code that outputs structured text.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  ccv [prompt]\n")
-		fmt.Fprintf(os.Stderr, "  ccv [claude args...]\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1    Show verbose output including full tool inputs\n")
-		fmt.Fprintf(os.Stderr, "  CCV_QUIET=1      Show only assistant text responses\n")
-		fmt.Fprintf(os.Stderr, "  CCV_FORMAT=json  Output format: text (default), json\n")
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  ccv \"Explain this codebase\"\n")
-		fmt.Fprintf(os.Stderr, "  ccv -p \"Fix the bug\" --allowedTools Bash,Read\n")
-		fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1 ccv \"Debug this issue\"\n")
-	}
-
-	flag.Parse()
-
-	// Read configuration from environment variables
+	// Read configuration from environment variables (can be overridden by flags)
 	verbose := os.Getenv("CCV_VERBOSE") == "1"
 	quiet := os.Getenv("CCV_QUIET") == "1"
 	format := strings.ToLower(os.Getenv("CCV_FORMAT"))
@@ -51,20 +53,53 @@ func main() {
 		format = "text"
 	}
 
-	if *showVersion {
-		fmt.Printf("ccv version %s\n", version)
-		os.Exit(0)
+	// Parse and filter ccv-specific flags, pass remaining args to claude
+	var claudeArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if arg == "-version" || arg == "--version" {
+			fmt.Printf("ccv version %s\n", version)
+			os.Exit(0)
+		}
+		if arg == "-help" || arg == "--help" {
+			printUsage()
+			os.Exit(0)
+		}
+		if arg == "--verbose" || arg == "-verbose" {
+			verbose = true
+			continue
+		}
+		if arg == "--quiet" || arg == "-quiet" {
+			quiet = true
+			continue
+		}
+		if arg == "--format" || arg == "-format" {
+			// Next arg is the format value
+			if i+1 < len(args) {
+				i++
+				format = strings.ToLower(args[i])
+			}
+			continue
+		}
+		// Handle --format=value syntax
+		if strings.HasPrefix(arg, "--format=") {
+			format = strings.ToLower(strings.TrimPrefix(arg, "--format="))
+			continue
+		}
+		if strings.HasPrefix(arg, "-format=") {
+			format = strings.ToLower(strings.TrimPrefix(arg, "-format="))
+			continue
+		}
+
+		// Pass through to claude
+		claudeArgs = append(claudeArgs, arg)
 	}
 
-	if *showHelp {
-		flag.Usage()
-		os.Exit(0)
-	}
-
-	args := flag.Args()
+	args = claudeArgs
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Error: No prompt or arguments provided")
-		flag.Usage()
+		printUsage()
 		os.Exit(1)
 	}
 
