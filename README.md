@@ -52,6 +52,12 @@ go install github.com/agusmdev/ccv@latest
 ```bash
 git clone https://github.com/agusmdev/ccv.git
 cd ccv
+make install
+```
+
+Or manually:
+
+```bash
 go build -o ccv
 sudo mv ccv /usr/local/bin/
 ```
