@@ -1037,6 +1037,76 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		return
 	}
 
+	// Handle Playwright browser tools - specialized rendering for browser automation
+	// Tools: mcp__4_5v_mcp__analyze_image (browser-based vision)
+	// Other Playwright tools: navigate, click, type, screenshot, snapshot (typically via MCP)
+
+	// Playwright navigate - display URL
+	if toolCall.Name == "navigate" || strings.HasSuffix(toolCall.Name, "__navigate") {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		if url, ok := inputMap["url"].(string); ok {
+			fmt.Fprintf(p.writer, "  %sURL:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, url, c.Reset)
+		}
+		if timeout, ok := inputMap["timeout"].(float64); ok && timeout > 0 && p.mode == OutputModeVerbose {
+			fmt.Fprintf(p.writer, "  %sTimeout:%s %s%.0fms%s\n", c.LabelDim, c.Reset, c.ValueBright, timeout, c.Reset)
+		}
+		return
+	}
+
+	// Playwright click - display element selector
+	if toolCall.Name == "click" || strings.HasSuffix(toolCall.Name, "__click") {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		if selector, ok := inputMap["selector"].(string); ok {
+			fmt.Fprintf(p.writer, "  %sElement:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, selector, c.Reset)
+		}
+		return
+	}
+
+	// Playwright type/fill - display element and text
+	if toolCall.Name == "type" || toolCall.Name == "fill" || strings.HasSuffix(toolCall.Name, "__type") || strings.HasSuffix(toolCall.Name, "__fill") {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		if selector, ok := inputMap["selector"].(string); ok {
+			fmt.Fprintf(p.writer, "  %sElement:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, selector, c.Reset)
+		}
+		if text, ok := inputMap["text"].(string); ok {
+			// Show truncated text (first 80 chars)
+			displayText := text
+			if len(text) > 80 {
+				displayText = text[:77] + "..."
+			}
+			fmt.Fprintf(p.writer, "  %sText:%s %s\n", c.LabelDim, c.Reset, displayText)
+		}
+		return
+	}
+
+	// Playwright screenshot - display filename and options
+	if toolCall.Name == "screenshot" || strings.HasSuffix(toolCall.Name, "__screenshot") {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		if path, ok := inputMap["path"].(string); ok {
+			fmt.Fprintf(p.writer, "  %sFile:%s %s%s%s\n", c.LabelDim, c.Reset, c.FilePath, path, c.Reset)
+		}
+		// Show screenshot type if present
+		if screenshotType, ok := inputMap["type"].(string); ok && p.mode == OutputModeVerbose {
+			fmt.Fprintf(p.writer, "  %sType:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, screenshotType, c.Reset)
+		}
+		return
+	}
+
+	// Playwright snapshot - display that we're capturing page state
+	if toolCall.Name == "snapshot" || strings.HasSuffix(toolCall.Name, "__snapshot") {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		// In verbose mode, show what we're snapshotting
+		if p.mode == OutputModeVerbose {
+			fmt.Fprintf(p.writer, "  %sCapturing page state...%s\n", c.LabelDim, c.Reset)
+		}
+		return
+	}
+
 	// Handle Context7 MCP tools - specialized rendering for library documentation lookups
 	// Tools: mcp__context7__resolve-library-id, mcp__context7__query-docs
 	if toolCall.Name == "mcp__context7__resolve-library-id" {
