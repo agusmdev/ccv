@@ -258,6 +258,62 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 		return
 	}
 
+	// Handle Glob tool results - show file paths found
+	if toolCall.Name == "Glob" {
+		if block.Content != "" {
+			lines := strings.Split(block.Content, "\n")
+			fileCount := 0
+			for _, line := range lines {
+				// Skip empty lines
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				fmt.Fprintf(p.writer, "  %s\n", line)
+				fileCount++
+			}
+
+			// Show count summary if no files or error
+			if fileCount == 0 && !block.IsError {
+				fmt.Fprintf(p.writer, "  (no matches)\n")
+			}
+		} else if !block.IsError {
+			fmt.Fprintf(p.writer, "  (no matches)\n")
+		}
+
+		if block.IsError {
+			fmt.Fprintf(p.writer, "  ✗ Search failed\n")
+		}
+		return
+	}
+
+	// Handle Grep tool results - show matches with file:line format
+	if toolCall.Name == "Grep" {
+		if block.Content != "" {
+			lines := strings.Split(block.Content, "\n")
+			matchCount := 0
+			for _, line := range lines {
+				// Skip empty lines
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				fmt.Fprintf(p.writer, "  %s\n", line)
+				matchCount++
+			}
+
+			// Show count summary if no matches or error
+			if matchCount == 0 && !block.IsError {
+				fmt.Fprintf(p.writer, "  (no matches)\n")
+			}
+		} else if !block.IsError {
+			fmt.Fprintf(p.writer, "  (no matches)\n")
+		}
+
+		if block.IsError {
+			fmt.Fprintf(p.writer, "  ✗ Search failed\n")
+		}
+		return
+	}
+
 	// Default handling for other tools (including Read/Write)
 	// Note: tool_result blocks are not streamed by claude CLI, so this
 	// is mainly for any future tools that do expose results
@@ -396,6 +452,34 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 					}
 				}
 			}
+			return
+		}
+	}
+
+	// Handle Glob tool specially
+	if toolCall.Name == "Glob" {
+		if pattern, ok := inputMap["pattern"].(string); ok {
+			fmt.Fprintf(p.writer, "→ Glob: %s\n", pattern)
+			return
+		}
+	}
+
+	// Handle Grep tool specially
+	if toolCall.Name == "Grep" {
+		if pattern, ok := inputMap["pattern"].(string); ok {
+			// Also include any filters or options if present
+			filters := ""
+			if glob, ok := inputMap["glob"].(string); ok && glob != "" {
+				filters += fmt.Sprintf(" [glob: %s]", glob)
+			}
+			if fileType, ok := inputMap["type"].(string); ok && fileType != "" {
+				filters += fmt.Sprintf(" [type: %s]", fileType)
+			}
+			if path, ok := inputMap["path"].(string); ok && path != "" && path != "." {
+				filters += fmt.Sprintf(" [path: %s]", path)
+			}
+
+			fmt.Fprintf(p.writer, "→ Grep: %s%s\n", pattern, filters)
 			return
 		}
 	}
