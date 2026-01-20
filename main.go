@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 var (
@@ -48,6 +51,57 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TODO: Initialize TUI and start Claude subprocess
-	fmt.Printf("Starting CCV with args: %v\n", args)
+	// Create context with signal handling
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle OS signals for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Fprintln(os.Stderr, "\nReceived interrupt signal, shutting down...")
+		cancel()
+	}()
+
+	// Create and start the Claude runner
+	runner, err := NewClaudeRunner(ctx, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating runner: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := runner.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting Claude: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process messages and errors
+	go func() {
+		for msg := range runner.Messages() {
+			// TODO: Send to TUI for rendering
+			// For now, just print the type
+			switch m := msg.(type) {
+			case *SystemInit:
+				fmt.Printf("[SYSTEM] Session: %s, Model: %s\n", m.SessionID, m.Model)
+			case *AssistantMessage:
+				fmt.Printf("[ASSISTANT] Message received\n")
+			case *Result:
+				fmt.Printf("[RESULT] %s (Total cost: $%.4f)\n", m.Result, m.TotalCost)
+			case *StreamEvent:
+				fmt.Printf("[STREAM] %s\n", m.Type)
+			default:
+				fmt.Printf("[MESSAGE] Type: %T\n", msg)
+			}
+		}
+	}()
+
+	go func() {
+		for err := range runner.Errors() {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+	}()
+
+	// Wait for runner to complete
+	runner.Wait()
 }
