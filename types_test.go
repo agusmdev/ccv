@@ -756,3 +756,775 @@ func TestParseMessage_UserMessage(t *testing.T) {
 		t.Fatalf("expected 1 content block, got %d", len(user.Message.Content))
 	}
 }
+
+func TestParseMessage_SystemInit_AllOptionalFields(t *testing.T) {
+	data := []byte(`{
+		"type": "system",
+		"subtype": "init",
+		"session_id": "sess-full",
+		"model": "claude-opus-4-5-20251101",
+		"cwd": "/home/user/project",
+		"tools": ["Read", "Bash", "Write"],
+		"mcp_servers": [
+			{"name": "server1", "status": "running"},
+			{"name": "server2", "status": "stopped"}
+		],
+		"permissionMode": "auto",
+		"slash_commands": ["/commit", "/review"],
+		"apiKeySource": "env",
+		"claude_code_version": "1.0.0",
+		"output_style": "compact",
+		"agents": ["explore", "plan"],
+		"skills": ["fastapi-auth"],
+		"plugins": [
+			{"name": "plugin1", "path": "/path/to/plugin1"}
+		],
+		"uuid": "uuid-12345"
+	}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	sysInit, ok := msg.(*SystemInit)
+	if !ok {
+		t.Fatalf("expected *SystemInit, got %T", msg)
+	}
+
+	if sysInit.SessionID != "sess-full" {
+		t.Errorf("expected session_id 'sess-full', got '%s'", sysInit.SessionID)
+	}
+	if sysInit.Model != "claude-opus-4-5-20251101" {
+		t.Errorf("expected model 'claude-opus-4-5-20251101', got '%s'", sysInit.Model)
+	}
+	if sysInit.CwdPath != "/home/user/project" {
+		t.Errorf("expected cwd '/home/user/project', got '%s'", sysInit.CwdPath)
+	}
+	if len(sysInit.Tools) != 3 {
+		t.Errorf("expected 3 tools, got %d", len(sysInit.Tools))
+	}
+	if len(sysInit.McpServers) != 2 {
+		t.Errorf("expected 2 mcp_servers, got %d", len(sysInit.McpServers))
+	}
+	if sysInit.McpServers[0].Name != "server1" {
+		t.Errorf("expected first mcp_server name 'server1', got '%s'", sysInit.McpServers[0].Name)
+	}
+	if sysInit.PermissionMode != "auto" {
+		t.Errorf("expected permissionMode 'auto', got '%s'", sysInit.PermissionMode)
+	}
+	if len(sysInit.SlashCommands) != 2 {
+		t.Errorf("expected 2 slash_commands, got %d", len(sysInit.SlashCommands))
+	}
+	if sysInit.APIKeySource != "env" {
+		t.Errorf("expected apiKeySource 'env', got '%s'", sysInit.APIKeySource)
+	}
+	if sysInit.ClaudeCodeVersion != "1.0.0" {
+		t.Errorf("expected claude_code_version '1.0.0', got '%s'", sysInit.ClaudeCodeVersion)
+	}
+	if sysInit.OutputStyle != "compact" {
+		t.Errorf("expected output_style 'compact', got '%s'", sysInit.OutputStyle)
+	}
+	if len(sysInit.Agents) != 2 {
+		t.Errorf("expected 2 agents, got %d", len(sysInit.Agents))
+	}
+	if len(sysInit.Skills) != 1 {
+		t.Errorf("expected 1 skill, got %d", len(sysInit.Skills))
+	}
+	if len(sysInit.Plugins) != 1 {
+		t.Errorf("expected 1 plugin, got %d", len(sysInit.Plugins))
+	}
+	if sysInit.Plugins[0].Name != "plugin1" {
+		t.Errorf("expected plugin name 'plugin1', got '%s'", sysInit.Plugins[0].Name)
+	}
+	if sysInit.UUID != "uuid-12345" {
+		t.Errorf("expected uuid 'uuid-12345', got '%s'", sysInit.UUID)
+	}
+}
+
+func TestParseMessage_AssistantMessage_AllContentBlockTypes(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		validateFn func(t *testing.T, block ContentBlock)
+	}{
+		{
+			name: "text content block",
+			content: `{"type":"assistant","message":{
+				"id":"msg-1",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{"type":"text","text":"Hello, world!"}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				if block.Type != ContentBlockTypeText {
+					t.Errorf("expected content type 'text', got '%s'", block.Type)
+				}
+				if block.Text != "Hello, world!" {
+					t.Errorf("expected text 'Hello, world!', got '%s'", block.Text)
+				}
+			},
+		},
+		{
+			name: "thinking content block",
+			content: `{"type":"assistant","message":{
+				"id":"msg-2",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{"type":"thinking","thinking":"Let me analyze this..."}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				if block.Type != ContentBlockTypeThinking {
+					t.Errorf("expected content type 'thinking', got '%s'", block.Type)
+				}
+				if block.Thinking != "Let me analyze this..." {
+					t.Errorf("expected thinking 'Let me analyze this...', got '%s'", block.Thinking)
+				}
+			},
+		},
+		{
+			name: "redacted_thinking content block",
+			content: `{"type":"assistant","message":{
+				"id":"msg-3",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{"type":"redacted_thinking","thinking":"[REDACTED]"}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				if block.Type != ContentBlockTypeRedactedThinking {
+					t.Errorf("expected content type 'redacted_thinking', got '%s'", block.Type)
+				}
+			},
+		},
+		{
+			name: "tool_use content block",
+			content: `{"type":"assistant","message":{
+				"id":"msg-4",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{
+						"type":"tool_use",
+						"id":"tool_123",
+						"name":"Read",
+						"input":{"file_path":"./test.go"}
+					}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				if block.Type != ContentBlockTypeToolUse {
+					t.Errorf("expected content type 'tool_use', got '%s'", block.Type)
+				}
+				if block.ID != "tool_123" {
+					t.Errorf("expected tool id 'tool_123', got '%s'", block.ID)
+				}
+				if block.Name != "Read" {
+					t.Errorf("expected tool name 'Read', got '%s'", block.Name)
+				}
+				if len(block.Input) == 0 {
+					t.Error("expected tool input to be non-empty")
+				}
+			},
+		},
+		{
+			name: "tool_result content block",
+			content: `{"type":"assistant","message":{
+				"id":"msg-5",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{
+						"type":"tool_result",
+						"tool_use_id":"tool_123",
+						"content":"file contents here",
+						"is_error":false
+					}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				if block.Type != ContentBlockTypeToolResult {
+					t.Errorf("expected content type 'tool_result', got '%s'", block.Type)
+				}
+				if block.ToolUseID != "tool_123" {
+					t.Errorf("expected tool_use_id 'tool_123', got '%s'", block.ToolUseID)
+				}
+				if block.Content != "file contents here" {
+					t.Errorf("expected content 'file contents here', got '%s'", block.Content)
+				}
+				if block.IsError {
+					t.Error("expected is_error to be false")
+				}
+			},
+		},
+		{
+			name: "mixed content blocks",
+			content: `{"type":"assistant","message":{
+				"id":"msg-6",
+				"type":"message",
+				"role":"assistant",
+				"content":[
+					{"type":"thinking","thinking":"I'll help with that"},
+					{"type":"text","text":"Here's what I found:"},
+					{
+						"type":"tool_use",
+						"id":"tool_456",
+						"name":"Bash",
+						"input":{"command":"ls -la"}
+					}
+				]
+			}}`,
+			validateFn: func(t *testing.T, block ContentBlock) {
+				// Just verify we got all 3 blocks
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := ParseMessage([]byte(tt.content))
+			if err != nil {
+				t.Fatalf("ParseMessage failed: %v", err)
+			}
+
+			assistant, ok := msg.(*AssistantMessage)
+			if !ok {
+				t.Fatalf("expected *AssistantMessage, got %T", msg)
+			}
+
+			if len(assistant.Message.Content) == 0 {
+				t.Fatal("expected at least one content block")
+			}
+
+			// Validate first content block
+			tt.validateFn(t, assistant.Message.Content[0])
+
+			// For mixed content, verify count
+			if tt.name == "mixed content blocks" {
+				if len(assistant.Message.Content) != 3 {
+					t.Errorf("expected 3 content blocks in mixed content, got %d", len(assistant.Message.Content))
+				}
+			}
+		})
+	}
+}
+
+func TestParseMessage_UserMessage_WithToolResult(t *testing.T) {
+	data := []byte(`{
+		"type": "user",
+		"message": {
+			"role": "user",
+			"content": [
+				{
+					"type": "tool_result",
+					"tool_use_id": "tool_123",
+					"content": "Command output",
+					"is_error": false
+				}
+			]
+		},
+		"session_id": "sess-user",
+		"tool_use_result": {
+			"stdout": "stdout content",
+			"stderr": "stderr content"
+		}
+	}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	user, ok := msg.(*UserMessage)
+	if !ok {
+		t.Fatalf("expected *UserMessage, got %T", msg)
+	}
+
+	if len(user.Message.Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(user.Message.Content))
+	}
+
+	block := user.Message.Content[0]
+	if block.Type != ContentBlockTypeToolResult {
+		t.Errorf("expected content type 'tool_result', got '%s'", block.Type)
+	}
+	if block.ToolUseID != "tool_123" {
+		t.Errorf("expected tool_use_id 'tool_123', got '%s'", block.ToolUseID)
+	}
+	if block.Content != "Command output" {
+		t.Errorf("expected content 'Command output', got '%s'", block.Content)
+	}
+
+	if user.ToolUseResult == nil {
+		t.Fatal("expected tool_use_result to be non-nil")
+	}
+	if user.ToolUseResult.Stdout != "stdout content" {
+		t.Errorf("expected stdout 'stdout content', got '%s'", user.ToolUseResult.Stdout)
+	}
+	if user.ToolUseResult.Stderr != "stderr content" {
+		t.Errorf("expected stderr 'stderr content', got '%s'", user.ToolUseResult.Stderr)
+	}
+}
+
+func TestParseMessage_Result_AllOptionalFields(t *testing.T) {
+	data := []byte(`{
+		"type": "result",
+		"subtype": "success",
+		"result": "Task completed successfully",
+		"is_error": false,
+		"total_cost_usd": 0.12345,
+		"duration_ms": 15000,
+		"duration_api_ms": 12000,
+		"session_id": "sess-result",
+		"num_turns": 5,
+		"usage": {
+			"input_tokens": 1000,
+			"output_tokens": 500,
+			"cache_creation_input_tokens": 100,
+			"cache_read_input_tokens": 50,
+			"total_tokens": 1500,
+			"service_tier": "default"
+		},
+		"modelUsage": {
+			"claude-opus-4-5-20251101": {
+				"inputTokens": 800,
+				"outputTokens": 400,
+				"cacheReadInputTokens": 30,
+				"cacheCreationInputTokens": 20,
+				"webSearchRequests": 2,
+				"webFetchRequests": 5,
+				"costUSD": 0.1,
+				"contextWindow": 200000,
+				"maxOutputTokens": 8192
+			}
+		},
+		"permission_denials": [
+			{"tool_name": "DangerousTool", "reason": "security policy"}
+		],
+		"uuid": "result-uuid-67890"
+	}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	result, ok := msg.(*Result)
+	if !ok {
+		t.Fatalf("expected *Result, got %T", msg)
+	}
+
+	if result.Result != "Task completed successfully" {
+		t.Errorf("expected result 'Task completed successfully', got '%s'", result.Result)
+	}
+	if result.TotalCost != 0.12345 {
+		t.Errorf("expected total_cost 0.12345, got %f", result.TotalCost)
+	}
+	if result.DurationMS != 15000 {
+		t.Errorf("expected duration_ms 15000, got %d", result.DurationMS)
+	}
+	if result.DurationAPIMS != 12000 {
+		t.Errorf("expected duration_api_ms 12000, got %d", result.DurationAPIMS)
+	}
+	if result.NumTurns != 5 {
+		t.Errorf("expected num_turns 5, got %d", result.NumTurns)
+	}
+	if result.Usage == nil {
+		t.Fatal("expected usage to be non-nil")
+	}
+	if result.Usage.InputTokens != 1000 {
+		t.Errorf("expected input_tokens 1000, got %d", result.Usage.InputTokens)
+	}
+	if result.Usage.OutputTokens != 500 {
+		t.Errorf("expected output_tokens 500, got %d", result.Usage.OutputTokens)
+	}
+	if result.Usage.TotalTokens != 1500 {
+		t.Errorf("expected total_tokens 1500, got %d", result.Usage.TotalTokens)
+	}
+	if result.ModelUsage == nil {
+		t.Fatal("expected modelUsage to be non-nil")
+	}
+	if len(result.ModelUsage) != 1 {
+		t.Errorf("expected 1 model in modelUsage, got %d", len(result.ModelUsage))
+	}
+	modelEntry := result.ModelUsage["claude-opus-4-5-20251101"]
+	if modelEntry == nil {
+		t.Fatal("expected model entry for claude-opus-4-5-20251101")
+	}
+	if modelEntry.InputTokens != 800 {
+		t.Errorf("expected model inputTokens 800, got %d", modelEntry.InputTokens)
+	}
+	if modelEntry.CostUSD != 0.1 {
+		t.Errorf("expected model costUSD 0.1, got %f", modelEntry.CostUSD)
+	}
+	if len(result.PermissionDenials) != 1 {
+		t.Errorf("expected 1 permission denial, got %d", len(result.PermissionDenials))
+	}
+	if result.PermissionDenials[0].ToolName != "DangerousTool" {
+		t.Errorf("expected tool_name 'DangerousTool', got '%s'", result.PermissionDenials[0].ToolName)
+	}
+	if result.UUID != "result-uuid-67890" {
+		t.Errorf("expected uuid 'result-uuid-67890', got '%s'", result.UUID)
+	}
+}
+
+func TestToolUseResult_UnmarshalJSON_PartialFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		validate func(t *testing.T, result ToolUseResult)
+	}{
+		{
+			name: "only stdout field",
+			json: `{"stdout":"only stdout"}`,
+			validate: func(t *testing.T, result ToolUseResult) {
+				if result.Stdout != "only stdout" {
+					t.Errorf("expected stdout 'only stdout', got '%s'", result.Stdout)
+				}
+				if result.Stderr != "" {
+					t.Errorf("expected stderr to be empty, got '%s'", result.Stderr)
+				}
+				if result.Interrupted {
+					t.Error("expected Interrupted to be false")
+				}
+			},
+		},
+		{
+			name: "only stderr field",
+			json: `{"stderr":"error message"}`,
+			validate: func(t *testing.T, result ToolUseResult) {
+				if result.Stdout != "" {
+					t.Errorf("expected stdout to be empty, got '%s'", result.Stdout)
+				}
+				if result.Stderr != "error message" {
+					t.Errorf("expected stderr 'error message', got '%s'", result.Stderr)
+				}
+			},
+		},
+		{
+			name: "stdout and interrupted only",
+			json: `{"stdout":"output","interrupted":true}`,
+			validate: func(t *testing.T, result ToolUseResult) {
+				if result.Stdout != "output" {
+					t.Errorf("expected stdout 'output', got '%s'", result.Stdout)
+				}
+				if !result.Interrupted {
+					t.Error("expected Interrupted to be true")
+				}
+			},
+		},
+		{
+			name: "isImage only",
+			json: `{"isImage":true}`,
+			validate: func(t *testing.T, result ToolUseResult) {
+				if !result.IsImage {
+					t.Error("expected IsImage to be true")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result ToolUseResult
+			err := result.UnmarshalJSON([]byte(tt.json))
+			if err != nil {
+				t.Fatalf("UnmarshalJSON failed: %v", err)
+			}
+			tt.validate(t, result)
+		})
+	}
+}
+
+func TestAppState_StreamToolInput_MultipleTools(t *testing.T) {
+	state := NewAppState()
+
+	// Append partial input for multiple tools concurrently
+	state.AppendStreamToolInput("tool_1", `{"file_`)
+	state.AppendStreamToolInput("tool_2", `{"command":`)
+	state.AppendStreamToolInput("tool_1", `path":"./a.go"}`)
+	state.AppendStreamToolInput("tool_3", `{"url":"http://ex`)
+	state.AppendStreamToolInput("tool_2", `"ls -la"}`)
+	state.AppendStreamToolInput("tool_3", `ample.com"}`)
+
+	// Verify each tool's accumulated input
+	result1 := state.GetStreamToolInput("tool_1")
+	if result1 != `{"file_path":"./a.go"}` {
+		t.Errorf("tool_1: expected '%s', got '%s'", `{"file_path":"./a.go"}`, result1)
+	}
+
+	result2 := state.GetStreamToolInput("tool_2")
+	if result2 != `{"command":"ls -la"}` {
+		t.Errorf("tool_2: expected '%s', got '%s'", `{"command":"ls -la"}`, result2)
+	}
+
+	result3 := state.GetStreamToolInput("tool_3")
+	if result3 != `{"url":"http://example.com"}` {
+		t.Errorf("tool_3: expected '%s', got '%s'", `{"url":"http://example.com"}`, result3)
+	}
+
+	// Verify map has exactly 3 entries
+	if len(state.Stream.PartialToolInput) != 3 {
+		t.Errorf("expected 3 tools in PartialToolInput, got %d", len(state.Stream.PartialToolInput))
+	}
+}
+
+func TestParseMessage_SpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name       string
+		json       string
+		wantType   interface{}
+		validateFn func(t *testing.T, msg interface{})
+	}{
+		{
+			name: "special characters in text content",
+			json: `{"type":"assistant","message":{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"text","text":"Hello \"world\"!\nNew line\tTab\n\u00E9 Unicode \U0001F600 backslash \\ slash /"}]}}`,
+			validateFn: func(t *testing.T, msg interface{}) {
+				assistant := msg.(*AssistantMessage)
+				expected := `Hello "world"!
+New line	Tab
+é Unicode 😀 backslash \ slash /`
+				if assistant.Message.Content[0].Text != expected {
+					t.Errorf("expected text with special chars, got '%s'", assistant.Message.Content[0].Text)
+				}
+			},
+		},
+		{
+			name: "special characters in tool input JSON",
+			json: `{"type":"assistant","message":{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"echo \"test\" && ls -la | grep .go"}}]}}`,
+			validateFn: func(t *testing.T, msg interface{}) {
+				assistant := msg.(*AssistantMessage)
+				if len(assistant.Message.Content[0].Input) == 0 {
+					t.Error("expected tool input to be non-empty")
+				}
+			},
+		},
+		{
+			name: "unicode in session_id",
+			json: `{"type":"system","subtype":"init","session_id":"sess-测试-🚀","model":"claude-opus-4-5-20251101"}`,
+			validateFn: func(t *testing.T, msg interface{}) {
+				sysInit := msg.(*SystemInit)
+				if sysInit.SessionID != "sess-测试-🚀" {
+					t.Errorf("expected session_id with unicode, got '%s'", sysInit.SessionID)
+				}
+			},
+		},
+		{
+			name: "null characters and escaped chars",
+			json: `{"type":"assistant","message":{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"text","text":"Path: C:\\Users\\test\\file.txt"}]}}`,
+			validateFn: func(t *testing.T, msg interface{}) {
+				assistant := msg.(*AssistantMessage)
+				if assistant.Message.Content[0].Text != `Path: C:\Users\test\file.txt` {
+					t.Errorf("expected path with backslashes, got '%s'", assistant.Message.Content[0].Text)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := ParseMessage([]byte(tt.json))
+			if err != nil {
+				t.Fatalf("ParseMessage failed: %v", err)
+			}
+			tt.validateFn(t, msg)
+		})
+	}
+}
+
+func TestAppState_VeryLongToolInput(t *testing.T) {
+	state := NewAppState()
+
+	// Simulate streaming a very long JSON input (like a large file content)
+	longContent := string(make([]byte, 100*1024)) // 100KB
+	for i := range longContent {
+		longContent = longContent[:i] + "a" + longContent[i+1:]
+	}
+
+	// Append in chunks to simulate streaming
+	chunkSize := 1024
+	for i := 0; i < len(longContent); i += chunkSize {
+		end := i + chunkSize
+		if end > len(longContent) {
+			end = len(longContent)
+		}
+		state.AppendStreamToolInput("tool_large", longContent[i:end])
+	}
+
+	result := state.GetStreamToolInput("tool_large")
+	if len(result) != len(longContent) {
+		t.Errorf("expected length %d, got %d", len(longContent), len(result))
+	}
+
+	// Verify the content is correct
+	if result != longContent {
+		t.Error("long tool input content mismatch")
+	}
+}
+
+func TestToolUseResult_UnmarshalJSON_SpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name  string
+		json  string
+		check func(t *testing.T, result ToolUseResult)
+	}{
+		{
+			name: "newlines and quotes in stdout",
+			json: `{"stdout":"Line 1\nLine \"quoted\"\nLine 3"}`,
+			check: func(t *testing.T, result ToolUseResult) {
+				expected := "Line 1\nLine \"quoted\"\nLine 3"
+				if result.Stdout != expected {
+					t.Errorf("expected '%s', got '%s'", expected, result.Stdout)
+				}
+			},
+		},
+		{
+			name: "unicode in stderr",
+			json: `{"stderr":"Error: 错误 \U0001F4A3"}`,
+			check: func(t *testing.T, result ToolUseResult) {
+				if result.Stderr != "Error: 错误 💣" {
+					t.Errorf("expected unicode stderr, got '%s'", result.Stderr)
+				}
+			},
+		},
+		{
+			name: "backslashes in string form",
+			json: `"C:\\Users\\test\\file.txt"`,
+			check: func(t *testing.T, result ToolUseResult) {
+				if result.RawString != `C:\Users\test\file.txt` {
+					t.Errorf("expected '%s', got '%s'", `C:\Users\test\file.txt`, result.RawString)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result ToolUseResult
+			err := result.UnmarshalJSON([]byte(tt.json))
+			if err != nil {
+				t.Fatalf("UnmarshalJSON failed: %v", err)
+			}
+			tt.check(t, result)
+		})
+	}
+}
+
+func TestParseMessage_UsageWithCacheCreation(t *testing.T) {
+	data := []byte(`{
+		"type": "result",
+		"subtype": "success",
+		"is_error": false,
+		"usage": {
+			"input_tokens": 1000,
+			"output_tokens": 500,
+			"cache_creation_input_tokens": 200,
+			"cache_read_input_tokens": 100,
+			"total_tokens": 1500,
+			"cache_creation": {
+				"ephemeral_5m_input_tokens": 150,
+				"ephemeral_1h_input_tokens": 50
+			},
+			"service_tier": "default"
+		}
+	}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	result, ok := msg.(*Result)
+	if !ok {
+		t.Fatalf("expected *Result, got %T", msg)
+	}
+
+	if result.Usage == nil {
+		t.Fatal("expected usage to be non-nil")
+	}
+	if result.Usage.CacheCreation == nil {
+		t.Fatal("expected cache_creation to be non-nil")
+	}
+	if result.Usage.CacheCreation.Ephemeral5mInputTokens != 150 {
+		t.Errorf("expected ephemeral_5m_input_tokens 150, got %d", result.Usage.CacheCreation.Ephemeral5mInputTokens)
+	}
+	if result.Usage.CacheCreation.Ephemeral1hInputTokens != 50 {
+		t.Errorf("expected ephemeral_1h_input_tokens 50, got %d", result.Usage.CacheCreation.Ephemeral1hInputTokens)
+	}
+}
+
+func TestParseMessage_AssistantMessage_WithUsage(t *testing.T) {
+	data := []byte(`{
+		"type": "assistant",
+		"message": {
+			"id": "msg-1",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-opus-4-5-20251101",
+			"content": [{"type":"text","text":"Response"}],
+			"stop_reason": "end_turn",
+			"stop_sequence": null,
+			"usage": {
+				"input_tokens": 500,
+				"output_tokens": 100,
+				"cache_creation_input_tokens": 50,
+				"cache_read_input_tokens": 25
+			}
+		},
+		"cost_usd": 0.01,
+		"duration_ms": 2000,
+		"is_error": false
+	}`)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	assistant, ok := msg.(*AssistantMessage)
+	if !ok {
+		t.Fatalf("expected *AssistantMessage, got %T", msg)
+	}
+
+	if assistant.Message.Model != "claude-opus-4-5-20251101" {
+		t.Errorf("expected model 'claude-opus-4-5-20251101', got '%s'", assistant.Message.Model)
+	}
+	if assistant.Message.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason 'end_turn', got '%s'", assistant.Message.StopReason)
+	}
+	if assistant.Message.Usage == nil {
+		t.Fatal("expected usage to be non-nil")
+	}
+	if assistant.Message.Usage.InputTokens != 500 {
+		t.Errorf("expected input_tokens 500, got %d", assistant.Message.Usage.InputTokens)
+	}
+	if assistant.CostUSD != 0.01 {
+		t.Errorf("expected cost_usd 0.01, got %f", assistant.CostUSD)
+	}
+	if assistant.DurationMS != 2000 {
+		t.Errorf("expected duration_ms 2000, got %d", assistant.DurationMS)
+	}
+}
+
+func TestStreamState_CurrentIndex(t *testing.T) {
+	stream := NewStreamState()
+
+	if stream.CurrentIndex != 0 {
+		t.Errorf("expected initial CurrentIndex 0, got %d", stream.CurrentIndex)
+	}
+
+	stream.CurrentIndex = 5
+	if stream.CurrentIndex != 5 {
+		t.Errorf("expected CurrentIndex 5, got %d", stream.CurrentIndex)
+	}
+
+	stream.Reset()
+	if stream.CurrentIndex != 0 {
+		t.Errorf("expected CurrentIndex 0 after Reset, got %d", stream.CurrentIndex)
+	}
+}
