@@ -414,3 +414,260 @@ func TestDefaultFormatConfig(t *testing.T) {
 		t.Error("expected ShowLineNo to be true by default")
 	}
 }
+
+func TestFormatMCPToolName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "non-MCP tool name unchanged",
+			input:    "Bash",
+			expected: "Bash",
+		},
+		{
+			name:     "non-MCP tool with underscores unchanged",
+			input:    "some_random_tool",
+			expected: "some_random_tool",
+		},
+		{
+			name:     "standard MCP format",
+			input:    "mcp__filesystem__read_file",
+			expected: "filesystem:read_file",
+		},
+		{
+			name:     "malformed MCP name - no separator",
+			input:    "mcp__filesystem",
+			expected: "mcp__filesystem",
+		},
+		{
+			name:     "plugin with underscores converts to colons",
+			input:    "mcp__plugin_sub__tool",
+			expected: "plugin:sub:tool",
+		},
+		{
+			name:     "deeply nested plugin",
+			input:    "mcp__plugin_a_b__tool_name",
+			expected: "plugin:a:b:tool_name",
+		},
+		{
+			name:     "MCP prefix only returns original",
+			input:    "mcp__",
+			expected: "mcp__",
+		},
+		{
+			name:     "plugin with no underscores",
+			input:    "mcp__fs__read",
+			expected: "fs:read",
+		},
+		{
+			name:     "tool name with underscores preserved",
+			input:    "mcp__db__query_table",
+			expected: "db:query_table",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatMCPToolName(tt.input)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestHighlightSyntax_AdditionalCases(t *testing.T) {
+	scheme := DefaultScheme()
+
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{
+			name:     "highlights flags with double dash",
+			input:    `cmd --verbose --output=file`,
+			contains: BrightYellow,
+		},
+		{
+			name:     "highlights single dash flag",
+			input:    `cmd -v -f`,
+			contains: BrightYellow,
+		},
+		{
+			name:     "float numbers highlighted",
+			input:    `value 3.14 end`,
+			contains: Magenta,
+		},
+		{
+			name:     "escaped quotes in string",
+			input:    `echo "hello \"world\""`,
+			contains: Yellow,
+		},
+		{
+			name:     "braced environment variable",
+			input:    `echo ${HOME}`,
+			contains: Cyan,
+		},
+		{
+			name:     "multiple patterns in same line",
+			input:    `echo "hello" --flag 42 $HOME`,
+			contains: Yellow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := highlightSyntax(tt.input, scheme)
+			// Check that reset is present (indicating coloring was applied)
+			if !strings.Contains(result, Reset) {
+				t.Errorf("expected reset code in result: %q", result)
+			}
+			// For the "contains" color check, we verify the color code appears
+			if tt.contains != "" && !strings.Contains(result, tt.contains) {
+				t.Errorf("expected color code %q in result: %q", tt.contains, result)
+			}
+		})
+	}
+}
+
+func TestHighlightSyntax_EmptyString(t *testing.T) {
+	scheme := DefaultScheme()
+
+	result := highlightSyntax("", scheme)
+
+	if result != "" {
+		t.Errorf("expected empty string, got %q", result)
+	}
+}
+
+func TestFormatCodeBlock_CustomIndent(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		indent      string
+		showLineNo  bool
+		expectIndent string
+	}{
+		{
+			name:        "custom indent with spaces",
+			code:        "line1",
+			indent:      "    ",
+			showLineNo:  false,
+			expectIndent: "    ",
+		},
+		{
+			name:        "custom indent with tab",
+			code:        "line1",
+			indent:      "\t",
+			showLineNo:  false,
+			expectIndent: "\t",
+		},
+		{
+			name:        "zero-width indent",
+			code:        "line1",
+			indent:      "",
+			showLineNo:  false,
+			expectIndent: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &FormatConfig{
+				Colors:     NoColorScheme(),
+				ShowLineNo: tt.showLineNo,
+				Indent:     tt.indent,
+			}
+
+			result := FormatCodeBlock(tt.code, config)
+			lines := strings.Split(strings.TrimSuffix(result, "\n"), "\n")
+
+			if len(lines) != 1 {
+				t.Fatalf("expected 1 line, got %d", len(lines))
+			}
+
+			if !strings.HasPrefix(lines[0], tt.expectIndent+"line1") {
+				t.Errorf("expected line to start with %q, got: %q", tt.expectIndent, lines[0])
+			}
+		})
+	}
+}
+
+func TestFormatCodeBlock_LineNumberWidth(t *testing.T) {
+	tests := []struct {
+		name          string
+		lineCount     int
+		minWidth      int
+	}{
+		{
+			name:      "single line - width 1",
+			lineCount: 1,
+			minWidth:  1,
+		},
+		{
+			name:      "9 lines - width 1",
+			lineCount: 9,
+			minWidth:  1,
+		},
+		{
+			name:      "10 lines - width 2",
+			lineCount: 10,
+			minWidth:  2,
+		},
+		{
+			name:      "99 lines - width 2",
+			lineCount: 99,
+			minWidth:  2,
+		},
+		{
+			name:      "100 lines - width 3",
+			lineCount: 100,
+			minWidth:  3,
+		},
+		{
+			name:      "999 lines - width 3",
+			lineCount: 999,
+			minWidth:  3,
+		},
+		{
+			name:      "1000 lines - width 4",
+			lineCount: 1000,
+			minWidth:  4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build code with specified number of lines
+			var code strings.Builder
+			for i := 0; i < tt.lineCount; i++ {
+				code.WriteString("line\n")
+			}
+
+			config := &FormatConfig{
+				Colors:     NoColorScheme(),
+				ShowLineNo: true,
+				Indent:     "  ",
+			}
+
+			result := FormatCodeBlock(strings.TrimSuffix(code.String(), "\n"), config)
+			lines := strings.Split(strings.TrimSuffix(result, "\n"), "\n")
+
+			if len(lines) != tt.lineCount {
+				t.Fatalf("expected %d lines, got %d", tt.lineCount, len(lines))
+			}
+
+			// Check first line has correct line number width
+			firstLine := lines[0]
+			// Format: "<lineNo><space><indent>..."
+			// Find where the space after line number is
+			spaceIdx := strings.Index(firstLine, " ")
+			if spaceIdx < tt.minWidth {
+				t.Errorf("expected line number width at least %d, got %d", tt.minWidth, spaceIdx)
+			}
+		})
+	}
+}
