@@ -30,6 +30,7 @@ func NewClaudeRunner(ctx context.Context, args []string) (*ClaudeRunner, error) 
 
 	// Build command args with required flags
 	claudeArgs := []string{
+		"--print",                   // Required for non-interactive mode
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
@@ -79,6 +80,10 @@ func (r *ClaudeRunner) Start() error {
 		return fmt.Errorf("failed to start claude: %w", err)
 	}
 
+	// Close stdin immediately since we're in --print mode and don't need interactive input
+	// This signals to Claude that no interactive input will be provided
+	r.stdin.Close()
+
 	// Start goroutine to parse stdout (NDJSON)
 	r.wg.Add(1)
 	go r.parseStdout()
@@ -86,10 +91,6 @@ func (r *ClaudeRunner) Start() error {
 	// Start goroutine to forward stderr
 	r.wg.Add(1)
 	go r.forwardStderr()
-
-	// Start goroutine to forward stdin
-	r.wg.Add(1)
-	go r.forwardStdin()
 
 	// Start goroutine to wait for process completion
 	r.wg.Add(1)
@@ -157,22 +158,12 @@ func (r *ClaudeRunner) forwardStderr() {
 	}
 }
 
-// forwardStdin forwards os.Stdin to the subprocess for permission prompts
-func (r *ClaudeRunner) forwardStdin() {
-	defer r.wg.Done()
-	defer r.stdin.Close()
-
-	_, err := io.Copy(r.stdin, os.Stdin)
-	if err != nil && err != io.EOF {
-		r.errors <- fmt.Errorf("error forwarding stdin: %w", err)
-	}
-}
-
 // waitForCompletion waits for the process to complete
 func (r *ClaudeRunner) waitForCompletion() {
 	defer r.wg.Done()
 
 	err := r.cmd.Wait()
+
 	if err != nil {
 		// Only report non-zero exit if context wasn't cancelled
 		select {
