@@ -98,6 +98,8 @@ func (p *OutputProcessor) handleSystemInit(msg *SystemInit) {
 	}
 
 	fmt.Fprintf(p.writer, "[Session started: %s]\n", msg.Model)
+	// Show initial agent state
+	p.printAgentContext()
 }
 
 // handleAssistantMessage processes complete assistant messages
@@ -156,6 +158,28 @@ func (p *OutputProcessor) handleContentBlockStart(event *StreamEvent) {
 			Status: ToolCallStatusPending,
 		}
 		p.state.AddOrUpdateToolCall(toolCall)
+
+		// If this is a Task tool call, it spawns a child agent
+		if block.Name == "Task" {
+			// Parse input to extract subagent_type and description
+			var inputMap map[string]interface{}
+			if len(block.Input) > 0 {
+				json.Unmarshal(block.Input, &inputMap)
+			}
+
+			agentType := "task"
+			if subtype, ok := inputMap["subagent_type"].(string); ok {
+				agentType = subtype
+			}
+
+			description := ""
+			if desc, ok := inputMap["description"].(string); ok {
+				description = desc
+			}
+
+			// Create child agent
+			p.state.CreateChildAgent(block.ID, agentType, description)
+		}
 
 		// Don't print yet - input may be incomplete during streaming
 		// Will print when complete message arrives in processContentBlock
@@ -217,6 +241,13 @@ func (p *OutputProcessor) processContentBlock(block *ContentBlock) {
 			// Update the tool call with complete input
 			if tc, ok := p.state.PendingTools[block.ID]; ok {
 				tc.Input = block.Input
+
+				// If this is a Task tool, switch to child agent and show context
+				if tc.Name == "Task" {
+					p.state.SetCurrentAgent(block.ID)
+					p.printAgentContext()
+				}
+
 				p.printToolCall(tc)
 			}
 		}
@@ -238,6 +269,23 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 	toolCall, ok := p.state.PendingTools[block.ToolUseID]
 	if !ok {
 		return
+	}
+
+	// If this is a Task tool result, switch back to parent agent
+	if toolCall.Name == "Task" {
+		// Find the child agent
+		if childAgent, ok := p.state.AgentsByID[block.ToolUseID]; ok {
+			// Mark child as completed
+			childAgent.Status = AgentStatusCompleted
+
+			// Switch back to parent
+			if childAgent.ParentID != "" {
+				if parentAgent, ok := p.state.AgentsByID[childAgent.ParentID]; ok {
+					p.state.CurrentAgent = parentAgent
+					p.printAgentContext()
+				}
+			}
+		}
 	}
 
 	// Handle Bash tool results specially - always show output
@@ -519,6 +567,29 @@ func (p *OutputProcessor) handleResult(msg *Result) {
 	}
 
 	// Don't print summary here - will be done in printFinalSummary
+}
+
+// printAgentContext prints the current agent context with indentation
+func (p *OutputProcessor) printAgentContext() {
+	if p.mode == OutputModeQuiet {
+		return
+	}
+
+	agent := p.state.CurrentAgent
+	if agent == nil {
+		return
+	}
+
+	// Create indentation based on depth
+	indent := strings.Repeat("  ", agent.Depth)
+
+	// Format agent context
+	fmt.Fprintf(p.writer, "%s[%s: %s]\n", indent, agent.Type, agent.Status)
+
+	// Show description if present and in verbose mode
+	if p.mode == OutputModeVerbose && agent.Description != "" {
+		fmt.Fprintf(p.writer, "%s  %s\n", indent, agent.Description)
+	}
 }
 
 // printFinalSummary prints the final token usage and cost summary
