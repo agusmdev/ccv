@@ -24,6 +24,7 @@ type OutputProcessor struct {
 	mode   OutputMode
 	writer io.Writer
 	state  *AppState
+	result *Result // Final result with cost, duration, turns
 }
 
 // NewOutputProcessor creates a new output processor
@@ -558,15 +559,12 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 
 // handleResult processes the final result message
 func (p *OutputProcessor) handleResult(msg *Result) {
+	// Store the result for final summary
+	p.result = msg
+
 	if msg.Usage != nil {
 		p.state.TotalTokens = msg.Usage
 	}
-
-	if p.mode == OutputModeQuiet {
-		return
-	}
-
-	// Don't print summary here - will be done in printFinalSummary
 }
 
 // printAgentContext prints the current agent context with indentation
@@ -592,36 +590,76 @@ func (p *OutputProcessor) printAgentContext() {
 	}
 }
 
-// printFinalSummary prints the final token usage and cost summary
+// printFinalSummary prints the final result summary with tokens, cost, duration, and turns
 func (p *OutputProcessor) printFinalSummary() {
 	if p.mode == OutputModeQuiet {
 		return
 	}
 
+	// Check if we have any data to display
 	tokens := p.state.TotalTokens
-	if tokens == nil {
-		return
-	}
+	hasTokens := tokens != nil && (tokens.InputTokens > 0 || tokens.OutputTokens > 0)
+	hasResult := p.result != nil && (p.result.TotalCost > 0 || p.result.TotalDuration > 0 || p.result.NumTurns > 0)
 
-	// Calculate total if not provided
-	if tokens.TotalTokens == 0 {
-		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens
-	}
-
-	if tokens.TotalTokens == 0 {
+	if !hasTokens && !hasResult {
 		return
 	}
 
 	fmt.Fprintln(p.writer)
 	fmt.Fprintf(p.writer, "───────────────────────────────────────\n")
-	fmt.Fprintf(p.writer, "Tokens: %d total (%d in, %d out)\n",
-		tokens.TotalTokens, tokens.InputTokens, tokens.OutputTokens)
 
-	if tokens.CacheReadInputTokens > 0 {
-		fmt.Fprintf(p.writer, "Cache: %d read", tokens.CacheReadInputTokens)
-		if tokens.CacheCreationInputTokens > 0 {
-			fmt.Fprintf(p.writer, ", %d created", tokens.CacheCreationInputTokens)
+	// Token summary
+	if hasTokens {
+		// Calculate total if not provided
+		if tokens.TotalTokens == 0 {
+			tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens
 		}
-		fmt.Fprintln(p.writer)
+
+		fmt.Fprintf(p.writer, "Tokens: %d total (%d in, %d out)\n",
+			tokens.TotalTokens, tokens.InputTokens, tokens.OutputTokens)
+
+		// Cache info
+		if tokens.CacheReadInputTokens > 0 || tokens.CacheCreationInputTokens > 0 {
+			fmt.Fprint(p.writer, "Cache: ")
+			if tokens.CacheReadInputTokens > 0 {
+				fmt.Fprintf(p.writer, "%d read", tokens.CacheReadInputTokens)
+				if tokens.CacheCreationInputTokens > 0 {
+					fmt.Fprintf(p.writer, ", %d created", tokens.CacheCreationInputTokens)
+				}
+			} else if tokens.CacheCreationInputTokens > 0 {
+				fmt.Fprintf(p.writer, "%d created", tokens.CacheCreationInputTokens)
+			}
+			fmt.Fprintln(p.writer)
+		}
+	}
+
+	// Cost, duration, and turns from Result
+	if p.result != nil {
+		// Cost
+		if p.result.TotalCost > 0 {
+			fmt.Fprintf(p.writer, "Cost: $%.4f\n", p.result.TotalCost)
+		}
+
+		// Duration
+		if p.result.TotalDuration > 0 {
+			duration := p.result.TotalDuration
+			if duration >= 60000 {
+				// Show as minutes:seconds for durations >= 1 minute
+				mins := duration / 60000
+				secs := (duration % 60000) / 1000
+				fmt.Fprintf(p.writer, "Duration: %dm %ds\n", mins, secs)
+			} else if duration >= 1000 {
+				// Show as seconds for durations >= 1 second
+				fmt.Fprintf(p.writer, "Duration: %.1fs\n", float64(duration)/1000)
+			} else {
+				// Show as milliseconds for very short durations
+				fmt.Fprintf(p.writer, "Duration: %dms\n", duration)
+			}
+		}
+
+		// Turns
+		if p.result.NumTurns > 0 {
+			fmt.Fprintf(p.writer, "Turns: %d\n", p.result.NumTurns)
+		}
 	}
 }
