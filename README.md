@@ -4,6 +4,9 @@
 
 A lightweight headless CLI wrapper for Claude Code that renders structured text output. Perfect for scripts, automation, logging, and headless environments.
 
+<img width="777" height="692" alt="image" src="https://github.com/user-attachments/assets/77d5f72e-d546-4671-af80-dbabc78c885f" />
+
+
 ## Drop-in Replacement for Headless Scripts
 
 **CCV is designed as a drop-in replacement for `claude` in headless environments.** Simply replace `claude` with `ccv` in your existing scripts to get pretty, structured output instead of raw JSON:
