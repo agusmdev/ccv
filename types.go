@@ -211,6 +211,202 @@ const (
 	AgentStatusFailed    AgentStatus = "failed"
 )
 
+// StreamState manages partial/streaming data during message processing
+type StreamState struct {
+	PartialText     string            `json:"partial_text"`
+	PartialThinking string            `json:"partial_thinking"`
+	PartialToolInput map[string]string `json:"partial_tool_input"` // tool ID -> partial JSON
+	CurrentIndex    int               `json:"current_index"`      // Current content block index
+}
+
+// NewStreamState creates a new StreamState
+func NewStreamState() *StreamState {
+	return &StreamState{
+		PartialToolInput: make(map[string]string),
+	}
+}
+
+// Reset clears all streaming state
+func (s *StreamState) Reset() {
+	s.PartialText = ""
+	s.PartialThinking = ""
+	s.PartialToolInput = make(map[string]string)
+	s.CurrentIndex = 0
+}
+
+// AppState manages the complete application state including agent hierarchy
+type AppState struct {
+	// Tool call tracking
+	PendingTools map[string]*ToolCall `json:"pending_tools"` // tool ID -> ToolCall
+
+	// Agent hierarchy
+	RootAgent    *AgentState `json:"root_agent"`    // Root agent (main)
+	CurrentAgent *AgentState `json:"current_agent"` // Currently active agent
+	AgentsByID   map[string]*AgentState `json:"agents_by_id"` // Quick lookup by tool use ID
+
+	// Token tracking
+	TotalTokens *TotalUsage `json:"total_tokens"`
+
+	// Streaming state
+	Stream *StreamState `json:"stream"`
+
+	// Session info
+	SessionID string `json:"session_id"`
+	Model     string `json:"model"`
+}
+
+// NewAppState creates a new application state
+func NewAppState() *AppState {
+	return &AppState{
+		PendingTools: make(map[string]*ToolCall),
+		AgentsByID:   make(map[string]*AgentState),
+		TotalTokens: &TotalUsage{},
+		Stream:      NewStreamState(),
+	}
+}
+
+// InitializeSession initializes the session with system info
+func (a *AppState) InitializeSession(sysInit *SystemInit) {
+	a.SessionID = sysInit.SessionID
+	a.Model = sysInit.Model
+
+	// Create root agent
+	a.RootAgent = &AgentState{
+		ID:        "main",
+		Type:      "main",
+		Status:    AgentStatusIdle,
+		ToolCalls: make([]ToolCall, 0),
+		Children:  make([]AgentState, 0),
+		Depth:     0,
+	}
+	a.CurrentAgent = a.RootAgent
+	a.AgentsByID["main"] = a.RootAgent
+}
+
+// AddOrUpdateToolCall adds or updates a tool call
+func (a *AppState) AddOrUpdateToolCall(toolCall *ToolCall) {
+	a.PendingTools[toolCall.ID] = toolCall
+
+	// Add to current agent
+	if a.CurrentAgent != nil {
+		// Check if tool call already exists in agent
+		found := false
+		for i, tc := range a.CurrentAgent.ToolCalls {
+			if tc.ID == toolCall.ID {
+				a.CurrentAgent.ToolCalls[i] = *toolCall
+				found = true
+				break
+			}
+		}
+		if !found {
+			a.CurrentAgent.ToolCalls = append(a.CurrentAgent.ToolCalls, *toolCall)
+		}
+	}
+}
+
+// CompleteToolCall marks a tool call as completed
+func (a *AppState) CompleteToolCall(toolID string, result string, isError bool) {
+	if tc, ok := a.PendingTools[toolID]; ok {
+		if isError {
+			tc.Status = ToolCallStatusFailed
+		} else {
+			tc.Status = ToolCallStatusCompleted
+		}
+		tc.Result = result
+		tc.IsError = isError
+
+		// Update in current agent's tool calls
+		if a.CurrentAgent != nil {
+			for i, t := range a.CurrentAgent.ToolCalls {
+				if t.ID == toolID {
+					a.CurrentAgent.ToolCalls[i] = *tc
+					break
+				}
+			}
+		}
+	}
+}
+
+// CreateChildAgent creates a new child agent from a Task tool call
+func (a *AppState) CreateChildAgent(parentToolID string, agentType string, description string) *AgentState {
+	parent := a.CurrentAgent
+	if parent == nil {
+		parent = a.RootAgent
+	}
+
+	child := &AgentState{
+		ID:          parentToolID,
+		Type:        agentType,
+		Description: description,
+		Status:      AgentStatusRunning,
+		ParentID:    parent.ID,
+		ToolCalls:   make([]ToolCall, 0),
+		Children:    make([]AgentState, 0),
+		Depth:       parent.Depth + 1,
+	}
+
+	// Add to parent's children
+	parent.Children = append(parent.Children, *child)
+
+	// Register in lookup map
+	a.AgentsByID[child.ID] = child
+
+	return child
+}
+
+// SetCurrentAgent sets the currently active agent
+func (a *AppState) SetCurrentAgent(agentID string) {
+	if agent, ok := a.AgentsByID[agentID]; ok {
+		a.CurrentAgent = agent
+		a.CurrentAgent.Status = AgentStatusRunning
+	}
+}
+
+// UpdateTokens updates the total token usage
+func (a *AppState) UpdateTokens(usage *Usage) {
+	if usage == nil {
+		return
+	}
+
+	a.TotalTokens.InputTokens += usage.InputTokens
+	a.TotalTokens.OutputTokens += usage.OutputTokens
+	a.TotalTokens.CacheCreationInputTokens += usage.CacheCreationInputTokens
+	a.TotalTokens.CacheReadInputTokens += usage.CacheReadInputTokens
+	a.TotalTokens.TotalTokens = a.TotalTokens.InputTokens + a.TotalTokens.OutputTokens
+}
+
+// AppendStreamText appends text to the current streaming state
+func (a *AppState) AppendStreamText(text string) {
+	a.Stream.PartialText += text
+}
+
+// AppendStreamThinking appends thinking to the current streaming state
+func (a *AppState) AppendStreamThinking(thinking string) {
+	a.Stream.PartialThinking += thinking
+}
+
+// AppendStreamToolInput appends partial tool input JSON
+func (a *AppState) AppendStreamToolInput(toolID string, partialJSON string) {
+	if current, ok := a.Stream.PartialToolInput[toolID]; ok {
+		a.Stream.PartialToolInput[toolID] = current + partialJSON
+	} else {
+		a.Stream.PartialToolInput[toolID] = partialJSON
+	}
+}
+
+// GetStreamToolInput gets the current partial tool input for a tool
+func (a *AppState) GetStreamToolInput(toolID string) string {
+	if input, ok := a.Stream.PartialToolInput[toolID]; ok {
+		return input
+	}
+	return ""
+}
+
+// ClearStreamState resets the streaming state after a complete message
+func (a *AppState) ClearStreamState() {
+	a.Stream.Reset()
+}
+
 // ParseMessage attempts to parse a JSON message and return the appropriate type
 func ParseMessage(data []byte) (interface{}, error) {
 	var base BaseMessage

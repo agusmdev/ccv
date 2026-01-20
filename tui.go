@@ -14,16 +14,13 @@ type Model struct {
 	runner   *ClaudeRunner
 	messages []interface{} // History of all messages received
 
+	// Application state
+	appState *AppState
+
 	// UI state
 	width  int
 	height int
 	ready  bool
-
-	// Current display state
-	currentMessage string
-	systemInfo     *SystemInit
-	thinking       string
-	toolCalls      []ToolCall
 
 	// Error state
 	err error
@@ -61,6 +58,7 @@ func NewModel(runner *ClaudeRunner) Model {
 	return Model{
 		runner:   runner,
 		messages: make([]interface{}, 0),
+		appState: NewAppState(),
 		styles:   NewStyles(),
 	}
 }
@@ -212,44 +210,101 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Store the message
 		m.messages = append(m.messages, msg.msg)
 
-		// Update current state based on message type
+		// Update app state based on message type
 		switch typedMsg := msg.msg.(type) {
 		case *SystemInit:
-			m.systemInfo = typedMsg
+			// Initialize session
+			m.appState.InitializeSession(typedMsg)
 
 		case *AssistantMessage:
+			// Clear streaming state when we get a complete message
+			m.appState.ClearStreamState()
+
 			// Process assistant message content
 			for _, block := range typedMsg.Message.Content {
 				switch block.Type {
 				case ContentBlockTypeText:
-					m.currentMessage = block.Text
+					m.appState.Stream.PartialText = block.Text
 				case ContentBlockTypeThinking:
-					m.thinking = block.Thinking
+					m.appState.Stream.PartialThinking = block.Thinking
 				case ContentBlockTypeToolUse:
 					// Add tool call
-					m.toolCalls = append(m.toolCalls, ToolCall{
+					toolCall := &ToolCall{
 						ID:     block.ID,
 						Name:   block.Name,
 						Input:  block.Input,
 						Status: ToolCallStatusRunning,
-					})
+					}
+					m.appState.AddOrUpdateToolCall(toolCall)
+
+					// If this is a Task tool, create a child agent
+					if block.Name == "Task" {
+						// We could parse the input to get agent type and description
+						m.appState.CreateChildAgent(block.ID, "task", "Task agent")
+					}
+				case ContentBlockTypeToolResult:
+					// Complete tool call
+					m.appState.CompleteToolCall(block.ToolUseID, block.Content, block.IsError)
 				}
 			}
+
+			// Update token usage
+			m.appState.UpdateTokens(typedMsg.Message.Usage)
 
 		case *StreamEvent:
 			// Handle streaming updates
-			if typedMsg.Delta != nil {
-				if typedMsg.Delta.Text != "" {
-					m.currentMessage += typedMsg.Delta.Text
+			switch typedMsg.Type {
+			case StreamEventContentBlockStart:
+				// New content block starting
+				if typedMsg.ContentBlock != nil && typedMsg.ContentBlock.Type == ContentBlockTypeToolUse {
+					// New tool call starting
+					toolCall := &ToolCall{
+						ID:     typedMsg.ContentBlock.ID,
+						Name:   typedMsg.ContentBlock.Name,
+						Status: ToolCallStatusPending,
+					}
+					m.appState.AddOrUpdateToolCall(toolCall)
 				}
-				if typedMsg.Delta.Thinking != "" {
-					m.thinking += typedMsg.Delta.Thinking
+
+			case StreamEventContentBlockDelta:
+				// Incremental content updates
+				if typedMsg.Delta != nil {
+					if typedMsg.Delta.Text != "" {
+						m.appState.AppendStreamText(typedMsg.Delta.Text)
+					}
+					if typedMsg.Delta.Thinking != "" {
+						m.appState.AppendStreamThinking(typedMsg.Delta.Thinking)
+					}
+					if typedMsg.Delta.PartialJSON != "" {
+						// Get the tool ID from the current pending tools
+						// This is a simplification - in reality we'd track the current block index
+						for id := range m.appState.PendingTools {
+							m.appState.AppendStreamToolInput(id, typedMsg.Delta.PartialJSON)
+							break
+						}
+					}
 				}
+
+			case StreamEventContentBlockStop:
+				// Content block complete - could finalize tool call input
+				// Nothing specific to do here
+
+			case StreamEventMessageDelta:
+				// Message-level delta (usage, stop reason, etc.)
+				if typedMsg.Usage != nil {
+					m.appState.UpdateTokens(typedMsg.Usage)
+				}
+
+			case StreamEventMessageStop:
+				// Message complete
+				m.appState.ClearStreamState()
 			}
 
 		case *Result:
-			// Final result received - we could mark completion
-			m.currentMessage = fmt.Sprintf("Completed: %s (Cost: $%.4f)", typedMsg.Result, typedMsg.TotalCost)
+			// Final result received
+			if typedMsg.Usage != nil {
+				m.appState.TotalTokens = typedMsg.Usage
+			}
 		}
 
 		// Continue waiting for next message
@@ -273,9 +328,9 @@ func (m Model) View() string {
 	var sections []string
 
 	// Header with system info
-	if m.systemInfo != nil {
+	if m.appState.SessionID != "" {
 		header := fmt.Sprintf("Claude Code Viewer - Session: %s | Model: %s",
-			m.systemInfo.SessionID[:8], m.systemInfo.Model)
+			truncate(m.appState.SessionID, 8), m.appState.Model)
 		sections = append(sections, m.styles.header.Render(header))
 	} else {
 		sections = append(sections, m.styles.header.Render("Claude Code Viewer"))
@@ -285,25 +340,35 @@ func (m Model) View() string {
 	var content []string
 
 	// Show thinking if available
-	if m.thinking != "" {
-		thinkingText := m.styles.thinking.Render(fmt.Sprintf("💭 Thinking: %s", truncate(m.thinking, 100)))
+	if m.appState.Stream.PartialThinking != "" {
+		thinkingText := m.styles.thinking.Render(fmt.Sprintf("💭 Thinking: %s", truncate(m.appState.Stream.PartialThinking, 100)))
 		content = append(content, thinkingText)
 	}
 
 	// Show current message
-	if m.currentMessage != "" {
-		messageText := m.styles.assistantText.Render(m.currentMessage)
+	if m.appState.Stream.PartialText != "" {
+		messageText := m.styles.assistantText.Render(m.appState.Stream.PartialText)
 		content = append(content, messageText)
 	}
 
-	// Show active tool calls
-	if len(m.toolCalls) > 0 {
+	// Show active tool calls from current agent
+	if m.appState.CurrentAgent != nil && len(m.appState.CurrentAgent.ToolCalls) > 0 {
 		content = append(content, "")
 		content = append(content, m.styles.toolCall.Render("Tool Calls:"))
-		for _, tc := range m.toolCalls {
+		for _, tc := range m.appState.CurrentAgent.ToolCalls {
 			toolLine := fmt.Sprintf("  → %s (%s)", tc.Name, tc.Status)
 			content = append(content, m.styles.toolResult.Render(toolLine))
 		}
+	}
+
+	// Show token count
+	if m.appState.TotalTokens.TotalTokens > 0 {
+		content = append(content, "")
+		tokenInfo := fmt.Sprintf("Tokens: %d input, %d output, %d total",
+			m.appState.TotalTokens.InputTokens,
+			m.appState.TotalTokens.OutputTokens,
+			m.appState.TotalTokens.TotalTokens)
+		content = append(content, m.styles.systemInfo.Render(tokenInfo))
 	}
 
 	// Show errors
