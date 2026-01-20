@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var (
@@ -76,31 +78,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Process messages and errors
-	go func() {
-		for msg := range runner.Messages() {
-			// TODO: Send to TUI for rendering
-			// For now, just print the type
-			switch m := msg.(type) {
-			case *SystemInit:
-				fmt.Printf("[SYSTEM] Session: %s, Model: %s\n", m.SessionID, m.Model)
-			case *AssistantMessage:
-				fmt.Printf("[ASSISTANT] Message received\n")
-			case *Result:
-				fmt.Printf("[RESULT] %s (Total cost: $%.4f)\n", m.Result, m.TotalCost)
-			case *StreamEvent:
-				fmt.Printf("[STREAM] %s\n", m.Type)
-			default:
-				fmt.Printf("[MESSAGE] Type: %T\n", msg)
-			}
-		}
-	}()
+	// Create and start the Bubble Tea program
+	model := NewModel(runner)
+	p := tea.NewProgram(
+		model,
+		tea.WithAltScreen(),       // Use alternate screen buffer
+		tea.WithMouseCellMotion(), // Enable mouse support
+	)
 
-	go func() {
-		for err := range runner.Errors() {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-	}()
+	// Run the program
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Wait for runner to complete
 	runner.Wait()
