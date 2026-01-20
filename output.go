@@ -622,7 +622,7 @@ func (p *OutputProcessor) printFinalSummary() {
 	// Check if we have any data to display
 	tokens := p.state.TotalTokens
 	hasTokens := tokens != nil && (tokens.InputTokens > 0 || tokens.OutputTokens > 0)
-	hasResult := p.result != nil && (p.result.TotalCost > 0 || p.result.TotalDuration > 0 || p.result.NumTurns > 0)
+	hasResult := p.result != nil && (p.result.TotalCost > 0 || p.result.DurationMS > 0 || p.result.NumTurns > 0)
 
 	if !hasTokens && !hasResult {
 		return
@@ -666,8 +666,8 @@ func (p *OutputProcessor) printFinalSummary() {
 		}
 
 		// Duration
-		if p.result.TotalDuration > 0 {
-			duration := p.result.TotalDuration
+		if p.result.DurationMS > 0 {
+			duration := p.result.DurationMS
 			if duration >= 60000 {
 				// Show as minutes:seconds for durations >= 1 minute
 				mins := duration / 60000

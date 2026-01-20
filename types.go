@@ -31,11 +31,20 @@ const (
 type ContentBlockType string
 
 const (
-	ContentBlockTypeText        ContentBlockType = "text"
-	ContentBlockTypeToolUse     ContentBlockType = "tool_use"
-	ContentBlockTypeToolResult  ContentBlockType = "tool_result"
-	ContentBlockTypeThinking    ContentBlockType = "thinking"
+	ContentBlockTypeText             ContentBlockType = "text"
+	ContentBlockTypeToolUse          ContentBlockType = "tool_use"
+	ContentBlockTypeToolResult       ContentBlockType = "tool_result"
+	ContentBlockTypeThinking         ContentBlockType = "thinking"
 	ContentBlockTypeRedactedThinking ContentBlockType = "redacted_thinking"
+)
+
+// DeltaType represents the type of delta in streaming events
+type DeltaType string
+
+const (
+	DeltaTypeTextDelta      DeltaType = "text_delta"
+	DeltaTypeInputJSONDelta DeltaType = "input_json_delta"
+	DeltaTypeThinkingDelta  DeltaType = "thinking_delta"
 )
 
 // BaseMessage is the common structure for all SDK messages
@@ -47,26 +56,48 @@ type BaseMessage struct {
 	Raw       json.RawMessage `json:"-"` // Store the original JSON for later parsing
 }
 
+// MCPServer represents an MCP server configuration
+type MCPServer struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// PluginInfo represents plugin information
+type PluginInfo struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
 // SystemInit represents the initial system message
 type SystemInit struct {
-	Type           string   `json:"type"`
-	Subtype        string   `json:"subtype"`
-	SessionID      string   `json:"session_id"`
-	Model          string   `json:"model,omitempty"`
-	CwdPath        string   `json:"cwd,omitempty"`
-	Tools          []string `json:"tools,omitempty"`
-	McpServers     []interface{} `json:"mcp_servers,omitempty"`
-	PermissionMode string   `json:"permission_mode,omitempty"`
+	Type             string       `json:"type"`
+	Subtype          string       `json:"subtype"`
+	SessionID        string       `json:"session_id"`
+	Model            string       `json:"model,omitempty"`
+	CwdPath          string       `json:"cwd,omitempty"`
+	Tools            []string     `json:"tools,omitempty"`
+	McpServers       []MCPServer  `json:"mcp_servers,omitempty"`
+	PermissionMode   string       `json:"permissionMode,omitempty"`
+	SlashCommands    []string     `json:"slash_commands,omitempty"`
+	APIKeySource     string       `json:"apiKeySource,omitempty"`
+	ClaudeCodeVersion string      `json:"claude_code_version,omitempty"`
+	OutputStyle      string       `json:"output_style,omitempty"`
+	Agents           []string     `json:"agents,omitempty"`
+	Skills           []string     `json:"skills,omitempty"`
+	Plugins          []PluginInfo `json:"plugins,omitempty"`
+	UUID             string       `json:"uuid,omitempty"`
 }
 
 // AssistantMessage represents an assistant response message
 type AssistantMessage struct {
-	Type         string         `json:"type"`
-	Message      MessageContent `json:"message"`
-	SessionID    string         `json:"session_id,omitempty"`
-	CostUSD      float64        `json:"cost_usd,omitempty"`
-	DurationMS   int64          `json:"duration_ms,omitempty"`
-	IsError      bool           `json:"is_error,omitempty"`
+	Type              string         `json:"type"`
+	Message           MessageContent `json:"message"`
+	SessionID         string         `json:"session_id,omitempty"`
+	ParentToolUseID   *string        `json:"parent_tool_use_id,omitempty"`
+	UUID              string         `json:"uuid,omitempty"`
+	CostUSD           float64        `json:"cost_usd,omitempty"`
+	DurationMS        int64          `json:"duration_ms,omitempty"`
+	IsError           bool           `json:"is_error,omitempty"`
 }
 
 // MessageContent represents the content of a message
@@ -81,12 +112,20 @@ type MessageContent struct {
 	Usage        *Usage         `json:"usage,omitempty"`
 }
 
+// CacheCreation represents cache creation details
+type CacheCreation struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
+}
+
 // Usage represents token usage information
 type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int            `json:"input_tokens"`
+	OutputTokens             int            `json:"output_tokens"`
+	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
+	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
+	ServiceTier              string         `json:"service_tier,omitempty"`
 }
 
 // ContentBlock represents a block of content (text, tool_use, thinking, etc.)
@@ -112,9 +151,11 @@ type ContentBlock struct {
 
 // StreamEventWrapper wraps a stream event from the Claude CLI
 type StreamEventWrapper struct {
-	Type      string       `json:"type"`
-	Event     *StreamEvent `json:"event"`
-	SessionID string       `json:"session_id,omitempty"`
+	Type            string       `json:"type"`
+	Event           *StreamEvent `json:"event"`
+	SessionID       string       `json:"session_id,omitempty"`
+	ParentToolUseID *string      `json:"parent_tool_use_id,omitempty"`
+	UUID            string       `json:"uuid,omitempty"`
 }
 
 // StreamEvent represents a streaming event from the API
@@ -137,26 +178,51 @@ type Delta struct {
 	StopSequence string `json:"stop_sequence,omitempty"`
 }
 
+// ServerToolUse represents server-side tool use statistics
+type ServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests"`
+	WebFetchRequests  int `json:"web_fetch_requests"`
+}
+
+// ModelUsageEntry represents usage for a specific model
+type ModelUsageEntry struct {
+	InputTokens            int     `json:"inputTokens"`
+	OutputTokens           int     `json:"outputTokens"`
+	CacheReadInputTokens   int     `json:"cacheReadInputTokens,omitempty"`
+	CacheCreationInputTokens int   `json:"cacheCreationInputTokens,omitempty"`
+	WebSearchRequests      int     `json:"webSearchRequests,omitempty"`
+	CostUSD                float64 `json:"costUSD,omitempty"`
+	ContextWindow          int     `json:"contextWindow,omitempty"`
+	MaxOutputTokens        int     `json:"maxOutputTokens,omitempty"`
+}
+
 // Result represents the final result message
 type Result struct {
-	Type       string          `json:"type"`
-	Subtype    string          `json:"subtype"`
-	Result     string          `json:"result,omitempty"`
-	IsError    bool            `json:"is_error"`
-	TotalCost  float64         `json:"total_cost_usd,omitempty"`
-	TotalDuration int64        `json:"total_duration_ms,omitempty"`
-	SessionID  string          `json:"session_id,omitempty"`
-	NumTurns   int             `json:"num_turns,omitempty"`
-	Usage      *TotalUsage     `json:"usage,omitempty"`
+	Type              string                     `json:"type"`
+	Subtype           string                     `json:"subtype"`
+	Result            string                     `json:"result,omitempty"`
+	IsError           bool                       `json:"is_error"`
+	TotalCost         float64                    `json:"total_cost_usd,omitempty"`
+	DurationMS        int64                      `json:"duration_ms,omitempty"`
+	DurationAPIMS     int64                      `json:"duration_api_ms,omitempty"`
+	SessionID         string                     `json:"session_id,omitempty"`
+	NumTurns          int                        `json:"num_turns,omitempty"`
+	Usage             *TotalUsage                `json:"usage,omitempty"`
+	ModelUsage        map[string]*ModelUsageEntry `json:"modelUsage,omitempty"`
+	PermissionDenials []string                   `json:"permission_denials,omitempty"`
+	UUID              string                     `json:"uuid,omitempty"`
 }
 
 // TotalUsage represents cumulative token usage
 type TotalUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-	TotalTokens              int `json:"total_tokens,omitempty"`
+	InputTokens              int            `json:"input_tokens"`
+	OutputTokens             int            `json:"output_tokens"`
+	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
+	TotalTokens              int            `json:"total_tokens,omitempty"`
+	ServerToolUse            *ServerToolUse `json:"server_tool_use,omitempty"`
+	ServiceTier              string         `json:"service_tier,omitempty"`
+	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
 }
 
 // CompactBoundary represents a boundary marker in the stream
@@ -164,6 +230,30 @@ type CompactBoundary struct {
 	Type      string `json:"type"`
 	Subtype   string `json:"subtype"`
 	SessionID string `json:"session_id,omitempty"`
+}
+
+// ToolUseResult represents metadata about a tool execution result
+type ToolUseResult struct {
+	Stdout      string `json:"stdout,omitempty"`
+	Stderr      string `json:"stderr,omitempty"`
+	Interrupted bool   `json:"interrupted,omitempty"`
+	IsImage     bool   `json:"isImage,omitempty"`
+}
+
+// UserMessageContent represents the content of a user message
+type UserMessageContent struct {
+	Role    string         `json:"role"`
+	Content []ContentBlock `json:"content"`
+}
+
+// UserMessage represents a user input message (including tool results)
+type UserMessage struct {
+	Type            string             `json:"type"`
+	Message         UserMessageContent `json:"message"`
+	SessionID       string             `json:"session_id,omitempty"`
+	ParentToolUseID *string            `json:"parent_tool_use_id,omitempty"`
+	UUID            string             `json:"uuid,omitempty"`
+	ToolUseResult   *ToolUseResult     `json:"tool_use_result,omitempty"`
 }
 
 // ToolCall represents a tool invocation with its state
@@ -425,6 +515,13 @@ func ParseMessage(data []byte) (interface{}, error) {
 
 	case "assistant":
 		var msg AssistantMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		return &msg, nil
+
+	case "user":
+		var msg UserMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return nil, err
 		}
