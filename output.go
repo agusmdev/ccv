@@ -258,7 +258,9 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 		return
 	}
 
-	// Default handling for other tools
+	// Default handling for other tools (including Read/Write)
+	// Note: tool_result blocks are not streamed by claude CLI, so this
+	// is mainly for any future tools that do expose results
 	status := "✓"
 	if block.IsError {
 		status = "✗"
@@ -297,6 +299,36 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 				if desc, ok := inputMap["description"].(string); ok && desc != "" {
 					fmt.Fprintf(p.writer, "  Description: %s\n", desc)
 				}
+			}
+			return
+		}
+	}
+
+	// Handle Read tool specially
+	if toolCall.Name == "Read" {
+		if filePath, ok := inputMap["file_path"].(string); ok {
+			fmt.Fprintf(p.writer, "→ Read: %s\n", filePath)
+			return
+		}
+	}
+
+	// Handle Write tool specially
+	if toolCall.Name == "Write" {
+		if filePath, ok := inputMap["file_path"].(string); ok {
+			// Count lines in the content to be written
+			lineCount := 0
+			if content, ok := inputMap["content"].(string); ok {
+				lineCount = strings.Count(content, "\n")
+				// If content doesn't end with newline, add 1 for the last line
+				if !strings.HasSuffix(content, "\n") && len(content) > 0 {
+					lineCount++
+				}
+			}
+
+			if lineCount > 0 {
+				fmt.Fprintf(p.writer, "→ Write: %s (%d lines)\n", filePath, lineCount)
+			} else {
+				fmt.Fprintf(p.writer, "→ Write: %s\n", filePath)
 			}
 			return
 		}
