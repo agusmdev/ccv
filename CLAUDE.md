@@ -52,7 +52,7 @@ go run . -- -p "Your prompt" --allowedTools Read,Bash
   - Streaming state for partial messages
 - `ParseMessage()` - Parses JSON into appropriate type structs
 
-**output.go** (TO BE CREATED) - Text output processor
+**output.go** - Text output processor
 - Consumes messages from `runner.messages` channel
 - Formats and writes structured text to stdout in real-time
 - Output includes:

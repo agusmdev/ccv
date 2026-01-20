@@ -72,7 +72,11 @@ func (p *OutputProcessor) ProcessMessages(messages <-chan interface{}, errors <-
 func (p *OutputProcessor) processMessage(msg interface{}) {
 	// JSON mode: just output the raw message
 	if p.mode == OutputModeJSON {
-		data, _ := json.Marshal(msg)
+		data, err := json.Marshal(msg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling message: %v\n", err)
+			return
+		}
 		fmt.Fprintln(p.writer, string(data))
 		return
 	}
@@ -175,7 +179,8 @@ func (p *OutputProcessor) handleContentBlockStart(event *StreamEvent) {
 			// Parse input to extract subagent_type and description
 			var inputMap map[string]interface{}
 			if len(block.Input) > 0 {
-				json.Unmarshal(block.Input, &inputMap)
+				// Ignore error - continue with empty map on failure (graceful degradation)
+				_ = json.Unmarshal(block.Input, &inputMap)
 			}
 
 			agentType := "task"
@@ -436,7 +441,8 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Parse input to extract parameters
 	var inputMap map[string]interface{}
 	if len(toolCall.Input) > 0 {
-		json.Unmarshal(toolCall.Input, &inputMap)
+		// Ignore error - continue with empty map on failure (graceful degradation)
+		_ = json.Unmarshal(toolCall.Input, &inputMap)
 	}
 
 	// Handle Bash tool specially

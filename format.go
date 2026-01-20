@@ -4,7 +4,36 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
+
+// syntaxPattern holds a compiled regex and its associated color
+type syntaxPattern struct {
+	regex *regexp.Regexp
+	color string
+}
+
+// syntaxPatterns holds compiled regex patterns for syntax highlighting
+var syntaxPatterns []syntaxPattern
+
+// syntaxPatternsOnce ensures patterns are compiled only once
+var syntaxPatternsOnce sync.Once
+
+// initSyntaxPatterns initializes the syntax highlighting patterns
+func initSyntaxPatterns() {
+	syntaxPatterns = []syntaxPattern{
+		// Strings (double-quoted)
+		{regexp.MustCompile(`"[^"\\]*(?:\\.[^"\\]*)*"`), Yellow},
+		// Strings (single-quoted)
+		{regexp.MustCompile(`'[^'\\]*(?:\\.[^'\\]*)*'`), Yellow},
+		// Environment variables ($VAR, ${VAR})
+		{regexp.MustCompile(`\$\{?[A-Z_][A-Z0-9_]*\}?`), Cyan},
+		// Flags (--flag, -f)
+		{regexp.MustCompile(`\s(--?[a-zA-Z][-a-zA-Z0-9]*)`), BrightYellow},
+		// Numbers
+		{regexp.MustCompile(`\b\d+\.?\d*\b`), Magenta},
+	}
+}
 
 // FormatConfig holds formatting options
 type FormatConfig struct {
@@ -60,25 +89,11 @@ func highlightSyntax(line string, c *ColorScheme) string {
 		return line
 	}
 
-	// Patterns for highlighting (order matters - more specific first)
-	patterns := []struct {
-		regex *regexp.Regexp
-		color string
-	}{
-		// Strings (double-quoted)
-		{regexp.MustCompile(`"[^"\\]*(?:\\.[^"\\]*)*"`), Yellow},
-		// Strings (single-quoted)
-		{regexp.MustCompile(`'[^'\\]*(?:\\.[^'\\]*)*'`), Yellow},
-		// Environment variables ($VAR, ${VAR})
-		{regexp.MustCompile(`\$\{?[A-Z_][A-Z0-9_]*\}?`), Cyan},
-		// Flags (--flag, -f)
-		{regexp.MustCompile(`\s(--?[a-zA-Z][-a-zA-Z0-9]*)`), BrightYellow},
-		// Numbers
-		{regexp.MustCompile(`\b\d+\.?\d*\b`), Magenta},
-	}
+	// Initialize patterns once (thread-safe)
+	syntaxPatternsOnce.Do(initSyntaxPatterns)
 
 	result := line
-	for _, p := range patterns {
+	for _, p := range syntaxPatterns {
 		result = p.regex.ReplaceAllStringFunc(result, func(match string) string {
 			return p.color + match + c.Reset
 		})

@@ -84,7 +84,7 @@ func NewClaudeRunner(ctx context.Context, args []string) (*ClaudeRunner, error) 
 	// Create command
 	cmd := exec.CommandContext(runnerCtx, "claude", claudeArgs...)
 
-	// Get pipes
+	// Get pipes - clean up previously created pipes on error
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -93,12 +93,15 @@ func NewClaudeRunner(ctx context.Context, args []string) (*ClaudeRunner, error) 
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		stdout.Close() // Clean up stdout pipe
 		cancel()
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		stdout.Close() // Clean up stdout pipe
+		stderr.Close() // Clean up stderr pipe
 		cancel()
 		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
