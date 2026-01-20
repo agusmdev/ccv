@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -14,28 +15,38 @@ var (
 )
 
 func main() {
-	// Define flags
+	// Define flags (only --help and --version)
 	showVersion := flag.Bool("version", false, "Show version information")
 	showHelp := flag.Bool("help", false, "Show help information")
-	verbose := flag.Bool("verbose", false, "Show verbose output including full tool inputs")
-	quiet := flag.Bool("quiet", false, "Show only assistant text responses")
-	format := flag.String("format", "text", "Output format: text, json")
 
 	// Custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "CCV - Claude Code Viewer\n\n")
 		fmt.Fprintf(os.Stderr, "A headless CLI wrapper for Claude Code that outputs structured text.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  ccv [flags] [prompt]\n")
-		fmt.Fprintf(os.Stderr, "  ccv [flags] -- [claude args...]\n\n")
+		fmt.Fprintf(os.Stderr, "  ccv [prompt]\n")
+		fmt.Fprintf(os.Stderr, "  ccv [claude args...]\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1    Show verbose output including full tool inputs\n")
+		fmt.Fprintf(os.Stderr, "  CCV_QUIET=1      Show only assistant text responses\n")
+		fmt.Fprintf(os.Stderr, "  CCV_FORMAT=json  Output format: text (default), json\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  ccv \"Explain this codebase\"\n")
-		fmt.Fprintf(os.Stderr, "  ccv -- -p \"Fix the bug\" --allowedTools Bash,Read\n")
+		fmt.Fprintf(os.Stderr, "  ccv -p \"Fix the bug\" --allowedTools Bash,Read\n")
+		fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1 ccv \"Debug this issue\"\n")
 	}
 
 	flag.Parse()
+
+	// Read configuration from environment variables
+	verbose := os.Getenv("CCV_VERBOSE") == "1"
+	quiet := os.Getenv("CCV_QUIET") == "1"
+	format := strings.ToLower(os.Getenv("CCV_FORMAT"))
+	if format == "" {
+		format = "text"
+	}
 
 	if *showVersion {
 		fmt.Printf("ccv version %s\n", version)
@@ -80,7 +91,7 @@ func main() {
 	}
 
 	// Create output processor
-	processor := NewOutputProcessor(*format, *verbose, *quiet)
+	processor := NewOutputProcessor(format, verbose, quiet)
 
 	// Process messages (blocks until completion)
 	processor.ProcessMessages(runner.Messages(), runner.Errors())
