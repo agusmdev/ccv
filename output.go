@@ -597,6 +597,39 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle TodoWrite tool specially - display todos in a prettified list format
+	if toolCall.Name == "TodoWrite" {
+		if todosRaw, ok := inputMap["todos"].([]interface{}); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset)
+
+			// Print each todo item with status indicator
+			for _, todoRaw := range todosRaw {
+				if todoMap, ok := todoRaw.(map[string]interface{}); ok {
+					content, hasContent := todoMap["content"].(string)
+					status, hasStatus := todoMap["status"].(string)
+
+					if hasContent && hasStatus {
+						// Choose status indicator
+						statusIcon := "○" // pending
+						statusColor := c.LabelDim
+						switch status {
+						case "in_progress":
+							statusIcon = "◐"
+							statusColor = c.ValueBright
+						case "completed":
+							statusIcon = "●"
+							statusColor = c.Success
+						}
+
+						// Print the todo item
+						fmt.Fprintf(p.writer, "  %s%s%s %s\n", statusColor, statusIcon, c.Reset, content)
+					}
+				}
+			}
+			return
+		}
+	}
+
 	// Default rendering for other tools
 	description := ""
 	if desc, ok := inputMap["description"].(string); ok {
