@@ -603,6 +603,83 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Handle LS tool specially - display path
+	if toolCall.Name == "LS" {
+		if path, ok := inputMap["path"].(string); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, path, c.Reset)
+
+			// In verbose mode, show stat details if present
+			if p.mode == OutputModeVerbose {
+				if stat, ok := inputMap["stat"].(bool); ok && stat {
+					fmt.Fprintf(p.writer, "  %s[with file stats]%s\n", c.LabelDim, c.Reset)
+				}
+			}
+			return
+		}
+	}
+
+	// Handle NotebookRead tool specially - display notebook path
+	if toolCall.Name == "NotebookRead" {
+		if notebookPath, ok := inputMap["notebook_path"].(string); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, notebookPath, c.Reset)
+
+			// Show offset and limit if present (for partial reads)
+			offset, hasOffset := inputMap["offset"].(float64)
+			limit, hasLimit := inputMap["limit"].(float64)
+			if hasOffset || hasLimit {
+				rangeInfo := ""
+				if hasOffset {
+					rangeInfo += fmt.Sprintf("offset: %.0f", offset)
+				}
+				if hasLimit {
+					if rangeInfo != "" {
+						rangeInfo += ", "
+					}
+					rangeInfo += fmt.Sprintf("limit: %.0f", limit)
+				}
+				fmt.Fprintf(p.writer, "  %s[%s]%s\n", c.LabelDim, rangeInfo, c.Reset)
+			}
+			return
+		}
+	}
+
+	// Handle NotebookEdit tool specially - display notebook path, cell ID, and edit mode
+	if toolCall.Name == "NotebookEdit" {
+		if notebookPath, ok := inputMap["notebook_path"].(string); ok {
+			fmt.Fprintf(p.writer, "%s→%s %s%s%s: %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, toolCall.Name, c.Reset, c.FilePath, notebookPath, c.Reset)
+
+			// Show cell ID and edit mode
+			cellID, hasCellID := inputMap["cell_id"].(string)
+			editMode, hasEditMode := inputMap["edit_mode"].(string)
+
+			if hasCellID {
+				fmt.Fprintf(p.writer, "  %sCell:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, cellID, c.Reset)
+			}
+
+			if hasEditMode {
+				// Map edit mode to display values
+				modeDisplay := editMode
+				switch editMode {
+				case "replace":
+					modeDisplay = "replace"
+				case "insert":
+					modeDisplay = "insert"
+				case "delete":
+					modeDisplay = "delete"
+				}
+				fmt.Fprintf(p.writer, "  %sMode:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, modeDisplay, c.Reset)
+			}
+
+			// In verbose mode, show cell type if present
+			if p.mode == OutputModeVerbose {
+				if cellType, ok := inputMap["cell_type"].(string); ok && cellType != "" {
+					fmt.Fprintf(p.writer, "  %sType:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, cellType, c.Reset)
+				}
+			}
+			return
+		}
+	}
+
 	// Handle Skill tool specially - display skill name (e.g., /commit, /review-pr)
 	if toolCall.Name == "Skill" {
 		if skillName, ok := inputMap["skill"].(string); ok {
