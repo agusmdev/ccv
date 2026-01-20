@@ -280,6 +280,31 @@ func (p *OutputProcessor) processToolResult(block *ContentBlock) {
 	}
 }
 
+// printDiff prints a unified diff-style output for Edit operations
+func (p *OutputProcessor) printDiff(oldStr, newStr string) {
+	// Split into lines for diff display
+	oldLines := strings.Split(oldStr, "\n")
+	newLines := strings.Split(newStr, "\n")
+
+	// Remove trailing empty line if present (from final \n)
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
+		oldLines = oldLines[:len(oldLines)-1]
+	}
+	if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+		newLines = newLines[:len(newLines)-1]
+	}
+
+	// Print removed lines (old)
+	for _, line := range oldLines {
+		fmt.Fprintf(p.writer, "  - %s\n", line)
+	}
+
+	// Print added lines (new)
+	for _, line := range newLines {
+		fmt.Fprintf(p.writer, "  + %s\n", line)
+	}
+}
+
 // printToolCall prints a tool call
 func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 	// Parse input to extract parameters
@@ -329,6 +354,47 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 				fmt.Fprintf(p.writer, "→ Write: %s (%d lines)\n", filePath, lineCount)
 			} else {
 				fmt.Fprintf(p.writer, "→ Write: %s\n", filePath)
+			}
+			return
+		}
+	}
+
+	// Handle Edit tool specially
+	if toolCall.Name == "Edit" {
+		if filePath, ok := inputMap["file_path"].(string); ok {
+			fmt.Fprintf(p.writer, "→ Edit: %s\n", filePath)
+
+			// Show diff if we have old and new strings
+			oldStr, hasOld := inputMap["old_string"].(string)
+			newStr, hasNew := inputMap["new_string"].(string)
+
+			if hasOld && hasNew {
+				p.printDiff(oldStr, newStr)
+			}
+			return
+		}
+	}
+
+	// Handle MultiEdit tool specially
+	if toolCall.Name == "MultiEdit" {
+		if filePath, ok := inputMap["file_path"].(string); ok {
+			fmt.Fprintf(p.writer, "→ MultiEdit: %s\n", filePath)
+
+			// Show diff for each edit if we have edits array
+			if edits, ok := inputMap["edits"].([]interface{}); ok {
+				for i, edit := range edits {
+					if editMap, ok := edit.(map[string]interface{}); ok {
+						oldStr, hasOld := editMap["old_string"].(string)
+						newStr, hasNew := editMap["new_string"].(string)
+
+						if hasOld && hasNew {
+							if i > 0 {
+								fmt.Fprintf(p.writer, "  ---\n")
+							}
+							p.printDiff(oldStr, newStr)
+						}
+					}
+				}
 			}
 			return
 		}
