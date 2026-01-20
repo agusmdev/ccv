@@ -49,21 +49,14 @@ type BaseMessage struct {
 
 // SystemInit represents the initial system message
 type SystemInit struct {
-	Type         string `json:"type"`
-	Subtype      string `json:"subtype"`
-	SessionID    string `json:"session_id"`
-	Model        string `json:"model,omitempty"`
-	CwdPath      string `json:"cwd,omitempty"`
-	Tools        []Tool `json:"tools,omitempty"`
-	McpServers   []string `json:"mcp_servers,omitempty"`
-	PermissionMode string `json:"permission_mode,omitempty"`
-}
-
-// Tool represents a tool available to Claude
-type Tool struct {
-	Name        string `json:"name"`
-	Type        string `json:"type,omitempty"`
-	Description string `json:"description,omitempty"`
+	Type           string   `json:"type"`
+	Subtype        string   `json:"subtype"`
+	SessionID      string   `json:"session_id"`
+	Model          string   `json:"model,omitempty"`
+	CwdPath        string   `json:"cwd,omitempty"`
+	Tools          []string `json:"tools,omitempty"`
+	McpServers     []interface{} `json:"mcp_servers,omitempty"`
+	PermissionMode string   `json:"permission_mode,omitempty"`
 }
 
 // AssistantMessage represents an assistant response message
@@ -115,6 +108,13 @@ type ContentBlock struct {
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
+}
+
+// StreamEventWrapper wraps a stream event from the Claude CLI
+type StreamEventWrapper struct {
+	Type      string       `json:"type"`
+	Event     *StreamEvent `json:"event"`
+	SessionID string       `json:"session_id,omitempty"`
 }
 
 // StreamEvent represents a streaming event from the API
@@ -443,6 +443,16 @@ func ParseMessage(data []byte) (interface{}, error) {
 			return nil, err
 		}
 		return &msg, nil
+
+	case "stream_event":
+		var wrapper StreamEventWrapper
+		if err := json.Unmarshal(data, &wrapper); err != nil {
+			return nil, err
+		}
+		if wrapper.Event != nil {
+			return wrapper.Event, nil
+		}
+		return &wrapper, nil
 
 	case string(StreamEventMessageStart),
 		string(StreamEventContentBlockStart),

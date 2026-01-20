@@ -32,6 +32,7 @@ func NewClaudeRunner(ctx context.Context, args []string) (*ClaudeRunner, error) 
 	claudeArgs := []string{
 		"--output-format", "stream-json",
 		"--include-partial-messages",
+		"--verbose",
 	}
 	claudeArgs = append(claudeArgs, args...)
 

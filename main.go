@@ -17,6 +17,9 @@ func main() {
 	// Define flags
 	showVersion := flag.Bool("version", false, "Show version information")
 	showHelp := flag.Bool("help", false, "Show help information")
+	verbose := flag.Bool("verbose", false, "Show verbose output including full tool inputs")
+	quiet := flag.Bool("quiet", false, "Show only assistant text responses")
+	format := flag.String("format", "text", "Output format: text, json")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -75,6 +78,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error starting Claude: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Create output processor
+	processor := NewOutputProcessor(*format, *verbose, *quiet)
+
+	// Process messages (blocks until completion)
+	processor.ProcessMessages(runner.Messages(), runner.Errors())
 
 	// Wait for runner to complete
 	runner.Wait()
