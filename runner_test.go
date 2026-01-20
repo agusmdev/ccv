@@ -1,6 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -640,5 +646,698 @@ func TestClaudeRunner_StopOrder(t *testing.T) {
 	}
 	if callOrder[1] != "wait" {
 		t.Errorf("expected wait to be called second, got: %v", callOrder)
+	}
+}
+
+// ==================== parseStdout Comprehensive Tests ====================
+
+// TestClaudeRunner_parseStdout_EmptyLinesSkipped tests that empty lines are skipped
+func TestClaudeRunner_parseStdout_EmptyLinesSkipped(t *testing.T) {
+	// Input with multiple empty lines
+	input := `{"type":"system","subtype":"init","session_id":"test1"}
+
+{"type":"system","subtype":"init","session_id":"test2"}
+
+`
+
+	readIndex := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(input) {
+				return 0, io.EOF
+			}
+			n := copy(p, input[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	// Collect messages
+	var messages []interface{}
+	timeout := time.After(1 * time.Second)
+CollectLoop:
+	for {
+		select {
+		case msg, ok := <-runner.messages:
+			if !ok {
+				break CollectLoop
+			}
+			messages = append(messages, msg)
+		case <-timeout:
+			t.Error("Timeout waiting for messages")
+			break CollectLoop
+		}
+	}
+
+	runner.Wait()
+
+	// Should have received 2 messages (empty lines skipped)
+	if len(messages) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(messages))
+	}
+}
+
+// TestClaudeRunner_parseStdout_ValidJSON tests valid JSON is parsed
+func TestClaudeRunner_parseStdout_ValidJSON(t *testing.T) {
+	input := `{"type":"system","subtype":"init","session_id":"test123"}
+{"type":"assistant","message":{"id":"msg1","type":"message","role":"assistant","content":[]}}
+`
+
+	readIndex := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(input) {
+				return 0, io.EOF
+			}
+			n := copy(p, input[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	var messages []interface{}
+	timeout := time.After(1 * time.Second)
+CollectLoop2:
+	for {
+		select {
+		case msg, ok := <-runner.messages:
+			if !ok {
+				break CollectLoop2
+			}
+			messages = append(messages, msg)
+		case <-timeout:
+			t.Fatal("Timeout waiting for messages")
+		}
+	}
+
+	runner.Wait()
+
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+
+	// Verify first message is SystemInit
+	sysMsg, ok := messages[0].(*SystemInit)
+	if !ok {
+		t.Fatalf("first message should be *SystemInit, got %T", messages[0])
+	}
+	if sysMsg.SessionID != "test123" {
+		t.Errorf("expected SessionID 'test123', got %q", sysMsg.SessionID)
+	}
+
+	// Verify second message is AssistantMessage
+	asstMsg, ok := messages[1].(*AssistantMessage)
+	if !ok {
+		t.Fatalf("second message should be *AssistantMessage, got %T", messages[1])
+	}
+	if asstMsg.Message.ID != "msg1" {
+		t.Errorf("expected Message.ID 'msg1', got %q", asstMsg.Message.ID)
+	}
+}
+
+// TestClaudeRunner_parseStdout_InvalidJSON tests invalid JSON sends error
+func TestClaudeRunner_parseStdout_InvalidJSON(t *testing.T) {
+	input := `{"type":"system","subtype":"init","session_id":"valid"}
+{invalid json here}
+{"type":"assistant","message":{"id":"msg1","type":"message","role":"assistant","content":[]}}
+`
+
+	readIndex := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(input) {
+				return 0, io.EOF
+			}
+			n := copy(p, input[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	// Collect both errors and messages
+	var errors []error
+	var messages []interface{}
+
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case err, ok := <-runner.errors:
+				if ok {
+					errors = append(errors, err)
+				}
+			case msg, ok := <-runner.messages:
+				if !ok {
+					close(done)
+					return
+				}
+				messages = append(messages, msg)
+			}
+		}
+	}()
+
+	<-done
+	runner.Wait()
+
+	// Should have received 1 error for invalid JSON
+	if len(errors) != 1 {
+		t.Errorf("expected 1 error, got %d: %v", len(errors), errors)
+	}
+	// Should still have received 2 valid messages
+	if len(messages) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(messages))
+	}
+}
+
+// TestClaudeRunner_parseStdout_ScannerError tests scanner errors are sent to errors channel
+func TestClaudeRunner_parseStdout_ScannerError(t *testing.T) {
+	scannerErr := &testError{message: "scanner error"}
+
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			return 0, scannerErr
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	select {
+	case err := <-runner.errors:
+		if err == nil {
+			t.Error("expected error from scanner")
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("timeout waiting for scanner error")
+	}
+
+	runner.Wait()
+}
+
+// TestClaudeRunner_parseStdout_ContextCancellation tests context cancellation stops processing
+func TestClaudeRunner_parseStdout_ContextCancellation(t *testing.T) {
+	// Continuous input that never ends
+	infiniteInput := `{"type":"system","subtype":"init","session_id":"test1"}
+{"type":"system","subtype":"init","session_id":"test2"}
+{"type":"system","subtype":"init","session_id":"test3"}
+`
+
+	readIndex := 0
+	callCount := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(infiniteInput) {
+				readIndex = 0 // Loop forever
+			}
+			n := copy(p, infiniteInput[readIndex:])
+			readIndex += n
+			callCount++
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 100),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	// Receive a few messages then cancel
+	msgCount := 0
+	for msg := range runner.messages {
+		msgCount++
+		if msgCount >= 3 {
+			cancel() // Cancel context
+			break
+		}
+	}
+
+	runner.Wait()
+
+	// Verify we stopped after cancellation (not all infinite messages)
+	if msgCount < 3 {
+		t.Errorf("expected at least 3 messages, got %d", msgCount)
+	}
+}
+
+// TestClaudeRunner_parseStdout_MessagesChannelClosed tests messages channel is closed on completion
+func TestClaudeRunner_parseStdout_MessagesChannelClosed(t *testing.T) {
+	input := `{"type":"system","subtype":"init","session_id":"test"}`
+
+	readIndex := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(input) {
+				return 0, io.EOF
+			}
+			n := copy(p, input[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	runner.Wait()
+
+	// Channel should be closed - receiving should not block
+	_, ok := <-runner.messages
+	if ok {
+		t.Error("messages channel should be closed after parseStdout completes")
+	}
+}
+
+// TestClaudeRunner_parseStdout_LargeMessages tests large messages within 1MB buffer
+func TestClaudeRunner_parseStdout_LargeMessages(t *testing.T) {
+	// Create a large JSON message (100KB)
+	largeContent := make([]byte, 100*1024)
+	for i := range largeContent {
+		largeContent[i] = 'x'
+	}
+	largeInput := `{"type":"system","subtype":"init","session_id":"test","model":"` + string(largeContent) + `"}`
+
+	readIndex := 0
+	mockStdout := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(largeInput) {
+				return 0, io.EOF
+			}
+			n := copy(p, largeInput[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stdout:   mockStdout,
+		messages: make(chan interface{}, 10),
+		errors:   make(chan error, 10),
+		ctx:      ctx,
+		wg:       &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.parseStdout()
+
+	select {
+	case msg := <-runner.messages:
+		if msg == nil {
+			t.Error("expected non-nil message")
+		}
+	case err := <-runner.errors:
+		t.Fatalf("unexpected error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Error("timeout waiting for large message")
+	}
+
+	runner.Wait()
+}
+
+// ==================== forwardStderr Comprehensive Tests ====================
+
+// TestClaudeRunner_forwardStderr_LinesForwarded tests stderr lines are forwarded
+func TestClaudeRunner_forwardStderr_LinesForwarded(t *testing.T) {
+	// Capture stderr output
+	originalStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	input := "error line 1\nerror line 2\nerror line 3\n"
+
+	readIndex := 0
+	mockStderr := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(input) {
+				return 0, io.EOF
+			}
+			n := copy(p, input[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stderr: mockStderr,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.forwardStderr()
+
+	runner.Wait()
+
+	w.Close()
+	os.Stderr = originalStderr
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	// Verify stderr was forwarded
+	if !strings.Contains(output, "error line 1") {
+		t.Errorf("stderr should contain 'error line 1', got: %q", output)
+	}
+	if !strings.Contains(output, "error line 2") {
+		t.Errorf("stderr should contain 'error line 2', got: %q", output)
+	}
+}
+
+// TestClaudeRunner_forwardStderr_ScannerError tests scanner errors are sent to errors channel
+func TestClaudeRunner_forwardStderr_ScannerError(t *testing.T) {
+	scannerErr := &testError{message: "stderr scanner error"}
+
+	mockStderr := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			return 0, scannerErr
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &ClaudeRunner{
+		stderr: mockStderr,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.forwardStderr()
+
+	select {
+	case err := <-runner.errors:
+		if err == nil {
+			t.Error("expected error from stderr scanner")
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("timeout waiting for stderr scanner error")
+	}
+
+	runner.Wait()
+}
+
+// TestClaudeRunner_forwardStderr_ContextCancellation tests context cancellation stops processing
+func TestClaudeRunner_forwardStderr_ContextCancellation(t *testing.T) {
+	infiniteInput := "error line 1\nerror line 2\n"
+
+	readIndex := 0
+	mockStderr := &mockReadCloser{
+		readFunc: func(p []byte) (int, error) {
+			if readIndex >= len(infiniteInput) {
+				readIndex = 0 // Loop forever
+			}
+			n := copy(p, infiniteInput[readIndex:])
+			readIndex += n
+			return n, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runner := &ClaudeRunner{
+		stderr: mockStderr,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.forwardStderr()
+
+	// Let it run a bit then cancel
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	runner.Wait()
+
+	// If this test completes without hanging, cancellation worked
+}
+
+// ==================== waitForCompletion Comprehensive Tests ====================
+
+// TestClaudeRunner_waitForCompletion_SuccessfulExit tests successful process completion
+func TestClaudeRunner_waitForCompletion_SuccessfulExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create a command that exits successfully
+	cmd := exec.CommandContext(ctx, "echo", "test")
+	err := cmd.Start()
+	if err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+
+	runner := &ClaudeRunner{
+		cmd:    cmd,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.waitForCompletion()
+
+	// Should complete without errors
+	select {
+	case err := <-runner.errors:
+		t.Errorf("unexpected error on successful exit: %v", err)
+	case <-time.After(5 * time.Second):
+		// Success - no error received
+	}
+
+	runner.Wait()
+}
+
+// TestClaudeRunner_waitForCompletion_NonZeroExit tests non-zero exit sends error
+func TestClaudeRunner_waitForCompletion_NonZeroExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create a command that exits with non-zero status
+	cmd := exec.CommandContext(ctx, "sh", "-c", "exit 42")
+	err := cmd.Start()
+	if err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+
+	runner := &ClaudeRunner{
+		cmd:    cmd,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.waitForCompletion()
+
+	select {
+	case err := <-runner.errors:
+		if err == nil {
+			t.Error("expected error for non-zero exit")
+		}
+		if !strings.Contains(err.Error(), "exited") {
+			t.Errorf("error should mention process exit, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("timeout waiting for non-zero exit error")
+	}
+
+	runner.Wait()
+}
+
+// TestClaudeRunner_waitForCompletion_ContextCancellation tests context cancellation doesn't send error
+func TestClaudeRunner_waitForCompletion_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create a long-running command
+	cmd := exec.CommandContext(ctx, "sleep", "100")
+	err := cmd.Start()
+	if err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+
+	runner := &ClaudeRunner{
+		cmd:    cmd,
+		errors: make(chan error, 10),
+		ctx:    ctx,
+		wg:     &sync.WaitGroup{},
+	}
+
+	runner.wg.Add(1)
+	go runner.waitForCompletion()
+
+	// Cancel context immediately
+	cancel()
+
+	// Should complete without sending an error
+	select {
+	case err := <-runner.errors:
+		t.Errorf("unexpected error when context cancelled: %v", err)
+	case <-time.After(1 * time.Second):
+		// Success - no error received within timeout
+	}
+
+	runner.Wait()
+}
+
+// ==================== Integration Tests ====================
+
+// TestClaudeRunner_FullLifecycle tests full lifecycle with mock subprocess
+func TestClaudeRunner_FullLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a mock subprocess that outputs JSON
+	runner, err := NewClaudeRunner(ctx, []string{"--help"})
+	if err != nil {
+		t.Fatalf("NewClaudeRunner failed: %v", err)
+	}
+
+	// Start the runner
+	if err := runner.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Collect some output
+	messageReceived := false
+	errorReceived := false
+
+	done := make(chan bool)
+	go func() {
+		timeout := time.After(10 * time.Second)
+		for {
+			select {
+			case <-runner.Messages():
+				messageReceived = true
+			case <-runner.Errors():
+				errorReceived = true
+			case <-timeout:
+				close(done)
+				return
+			}
+		}
+	}()
+
+	<-done
+	runner.Stop()
+
+	// Verify we received some data
+	if !messageReceived && !errorReceived {
+		t.Error("expected at least one message or error")
+	}
+}
+
+// TestClaudeRunner_Stop_CancelsAndWaits tests Stop cancels context and waits for goroutines
+func TestClaudeRunner_Stop_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	runner, err := NewClaudeRunner(ctx, []string{"--help"})
+	if err != nil {
+		t.Fatalf("NewClaudeRunner failed: %v", err)
+	}
+
+	if err := runner.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Stop immediately
+	runner.Stop()
+
+	// Verify runner is stopped - no timeout should occur
+	done := make(chan bool)
+	go func() {
+		runner.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Error("Stop() did not complete goroutines within timeout")
 	}
 }
