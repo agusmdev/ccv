@@ -20,7 +20,11 @@ for ((i=1; i<=$1; i++)); do
   echo "========================================"
   echo ""
 
-  # Run ccv which handles all output formatting
+  # Run ccv with zai API configuration
+  ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY" \
+  ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" \
+  API_TIMEOUT_MS="3000000" \
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1" \
   ccv --model "$MODEL" --dangerously-skip-permissions -p \
     "Use bd (beads) to find and work on a task:
 1. Run 'bd ready' to find an available task
