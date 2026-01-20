@@ -831,3 +831,141 @@ func TestPrintToolCall_ExitPlanMode_WithRemoteSync(t *testing.T) {
 		t.Errorf("expected session URL, got: %q", output)
 	}
 }
+
+func TestPrintToolCall_Context7ResolveLibraryID(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_ctx7", "mcp__context7__resolve-library-id", map[string]interface{}{
+		"libraryName": "react",
+		"id":          "react@18",
+		"version":     "18.2.0",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show the shortened MCP tool name
+	if !strings.Contains(output, "context7:resolve-library-id") {
+		t.Errorf("expected shortened tool name 'context7:resolve-library-id', got: %q", output)
+	}
+	// Should show library name
+	if !strings.Contains(output, "Library:") {
+		t.Errorf("expected 'Library:' label, got: %q", output)
+	}
+	if !strings.Contains(output, "react") {
+		t.Errorf("expected library name 'react', got: %q", output)
+	}
+	// Should show ID
+	if !strings.Contains(output, "ID:") {
+		t.Errorf("expected 'ID:' label, got: %q", output)
+	}
+	if !strings.Contains(output, "react@18") {
+		t.Errorf("expected library ID 'react@18', got: %q", output)
+	}
+	// Version should NOT show in normal mode
+	if strings.Contains(output, "Version:") {
+		t.Errorf("version should not show in normal mode, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_Context7ResolveLibraryID_Verbose(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	toolCall := createTestToolCall("tool_ctx7", "mcp__context7__resolve-library-id", map[string]interface{}{
+		"libraryName": "vue",
+		"id":          "vue@3",
+		"version":     "3.3.0",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Version SHOULD show in verbose mode
+	if !strings.Contains(output, "Version:") {
+		t.Errorf("expected 'Version:' label in verbose mode, got: %q", output)
+	}
+	if !strings.Contains(output, "3.3.0") {
+		t.Errorf("expected version '3.3.0' in verbose mode, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_Context7QueryDocs(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	toolCall := createTestToolCall("tool_qry", "mcp__context7__query-docs", map[string]interface{}{
+		"id":    "react@18",
+		"query": "how to use useEffect",
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show the shortened MCP tool name
+	if !strings.Contains(output, "context7:query-docs") {
+		t.Errorf("expected shortened tool name 'context7:query-docs', got: %q", output)
+	}
+	// Should show library ID
+	if !strings.Contains(output, "Library ID:") {
+		t.Errorf("expected 'Library ID:' label, got: %q", output)
+	}
+	if !strings.Contains(output, "react@18") {
+		t.Errorf("expected library ID 'react@18', got: %q", output)
+	}
+	// Should show query
+	if !strings.Contains(output, "Query:") {
+		t.Errorf("expected 'Query:' label, got: %q", output)
+	}
+	if !strings.Contains(output, "how to use useEffect") {
+		t.Errorf("expected query 'how to use useEffect', got: %q", output)
+	}
+}
+
+func TestPrintToolCall_Context7QueryDocs_LongQuery(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeText)
+
+	// Create a query longer than 120 chars
+	longQuery := "how to use useEffect with dependencies array and cleanup function in functional components with typescript and react hooks"
+	toolCall := createTestToolCall("tool_qry_long", "mcp__context7__query-docs", map[string]interface{}{
+		"id":    "react@18",
+		"query": longQuery,
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show truncated query with "..."
+	if !strings.Contains(output, "...") {
+		t.Errorf("expected truncated query with '...', got: %q", output)
+	}
+	// Should NOT show "Full query:" in normal mode
+	if strings.Contains(output, "Full query:") {
+		t.Errorf("should not show full query in normal mode, got: %q", output)
+	}
+}
+
+func TestPrintToolCall_Context7QueryDocs_Verbose(t *testing.T) {
+	p, w := newTestOutputProcessor(OutputModeVerbose)
+
+	// Create a query longer than 120 chars to test verbose mode expansion
+	longQuery := "how to use useEffect with dependencies array and cleanup function in functional components with typescript and react hooks"
+	toolCall := createTestToolCall("tool_qry_verb", "mcp__context7__query-docs", map[string]interface{}{
+		"id":    "next@14",
+		"query": longQuery,
+		"limit": float64(10),
+	})
+
+	p.printToolCall(toolCall)
+
+	output := w.String()
+	// Should show "Full query:" in verbose mode
+	if !strings.Contains(output, "Full query:") {
+		t.Errorf("expected 'Full query:' label in verbose mode, got: %q", output)
+	}
+	// Should show limit in verbose mode
+	if !strings.Contains(output, "Limit:") {
+		t.Errorf("expected 'Limit:' label in verbose mode, got: %q", output)
+	}
+	if !strings.Contains(output, "10") {
+		t.Errorf("expected limit '10' in verbose mode, got: %q", output)
+	}
+}

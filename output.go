@@ -1037,6 +1037,86 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		return
 	}
 
+	// Handle Context7 MCP tools - specialized rendering for library documentation lookups
+	// Tools: mcp__context7__resolve-library-id, mcp__context7__query-docs
+	if toolCall.Name == "mcp__context7__resolve-library-id" {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		// Show library name if present
+		if libraryName, ok := inputMap["libraryName"].(string); ok && libraryName != "" {
+			fmt.Fprintf(p.writer, "  %sLibrary:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, libraryName, c.Reset)
+		}
+
+		// Show library ID if present
+		if libraryID, ok := inputMap["id"].(string); ok && libraryID != "" {
+			fmt.Fprintf(p.writer, "  %sID:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, libraryID, c.Reset)
+		}
+
+		// Show version if present (in verbose mode)
+		if p.mode == OutputModeVerbose {
+			if version, ok := inputMap["version"].(string); ok && version != "" {
+				fmt.Fprintf(p.writer, "  %sVersion:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, version, c.Reset)
+			}
+		}
+
+		return
+	}
+
+	if toolCall.Name == "mcp__context7__query-docs" {
+		fmt.Fprintf(p.writer, "%s→%s %s%s%s\n", c.ToolArrow, c.Reset, c.ToolName, displayName, c.Reset)
+
+		// Show library ID if present
+		if libraryID, ok := inputMap["id"].(string); ok && libraryID != "" {
+			fmt.Fprintf(p.writer, "  %sLibrary ID:%s %s%s%s\n", c.LabelDim, c.Reset, c.ValueBright, libraryID, c.Reset)
+		}
+
+		// Show query if present
+		if query, ok := inputMap["query"].(string); ok && query != "" {
+			// Truncate query if too long (show first 120 chars)
+			displayQuery := query
+			if len(query) > 120 {
+				displayQuery = query[:117] + "..."
+			}
+			fmt.Fprintf(p.writer, "  %sQuery:%s %s\n", c.LabelDim, c.Reset, displayQuery)
+
+			// In verbose mode, show full query if it was truncated
+			if p.mode == OutputModeVerbose && len(query) > 120 {
+				// Wrap long queries to 80 chars per line
+				words := strings.Fields(query)
+				var lines []string
+				var currentLine strings.Builder
+
+				for _, word := range words {
+					if currentLine.Len() > 0 && currentLine.Len()+len(word)+1 > 80 {
+						lines = append(lines, currentLine.String())
+						currentLine.Reset()
+					}
+					if currentLine.Len() > 0 {
+						currentLine.WriteString(" ")
+					}
+					currentLine.WriteString(word)
+				}
+				if currentLine.Len() > 0 {
+					lines = append(lines, currentLine.String())
+				}
+
+				fmt.Fprintf(p.writer, "  %sFull query:%s\n", c.LabelDim, c.Reset)
+				for _, line := range lines {
+					fmt.Fprintf(p.writer, "    %s\n", line)
+				}
+			}
+		}
+
+		// Show limit if present (in verbose mode)
+		if p.mode == OutputModeVerbose {
+			if limit, ok := inputMap["limit"].(float64); ok && limit > 0 {
+				fmt.Fprintf(p.writer, "  %sLimit:%s %s%.0f%s\n", c.LabelDim, c.Reset, c.ValueBright, limit, c.Reset)
+			}
+		}
+
+		return
+	}
+
 	// Default rendering for other tools
 	description := ""
 	if desc, ok := inputMap["description"].(string); ok {
