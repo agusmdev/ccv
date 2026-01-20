@@ -266,10 +266,13 @@ func (p *OutputProcessor) printToolCall(toolCall *ToolCall) {
 		}
 	}
 
+	// Format status
+	statusStr := string(toolCall.Status)
+
 	if description != "" {
-		fmt.Fprintf(p.writer, "→ %s: %s\n", toolCall.Name, description)
+		fmt.Fprintf(p.writer, "→ %s: %s [%s]\n", toolCall.Name, description, statusStr)
 	} else {
-		fmt.Fprintf(p.writer, "→ %s\n", toolCall.Name)
+		fmt.Fprintf(p.writer, "→ %s [%s]\n", toolCall.Name, statusStr)
 	}
 
 	// Show full input in verbose mode
