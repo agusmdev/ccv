@@ -75,6 +75,14 @@ type ColorScheme struct {
 // colorEnabled tracks whether colors should be used
 var colorEnabled bool
 
+// noColorFlag tracks if --no-color flag was passed
+var noColorFlag bool
+
+// SetNoColor sets the no-color flag (called from main.go)
+func SetNoColor(noColor bool) {
+	noColorFlag = noColor
+}
+
 // DefaultScheme returns the default color scheme
 func DefaultScheme() *ColorScheme {
 	return &ColorScheme{
@@ -107,15 +115,29 @@ func DefaultScheme() *ColorScheme {
 		LabelDim:    Dim,
 		ValueBright: Bold,
 
-		// File paths
-		FilePath: BrightBlue,
+		// File paths - green as per visual requirements
+		FilePath: Green,
 
 		Reset: Reset,
 	}
 }
 
 // initColors determines if colors should be enabled based on terminal capability
+// and environment variables (NO_COLOR, TERM)
 func initColors() {
+	// Check NO_COLOR environment variable (https://no-color.org/)
+	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
+		colorEnabled = false
+		return
+	}
+
+	// Check TERM=dumb
+	if os.Getenv("TERM") == "dumb" {
+		colorEnabled = false
+		return
+	}
+
+	// Check if stdout is a terminal
 	colorEnabled = term.IsTerminal(int(os.Stdout.Fd()))
 }
 
@@ -126,7 +148,7 @@ func NoColorScheme() *ColorScheme {
 
 // GetScheme returns the appropriate color scheme based on terminal capability
 func GetScheme() *ColorScheme {
-	if colorEnabled {
+	if colorEnabled && !noColorFlag {
 		return DefaultScheme()
 	}
 	return NoColorScheme()

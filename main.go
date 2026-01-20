@@ -23,6 +23,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  --verbose        Show verbose output including full tool inputs\n")
 	fmt.Fprintf(os.Stderr, "  --quiet          Show only assistant text responses\n")
 	fmt.Fprintf(os.Stderr, "  --format <fmt>   Output format: text (default), json\n")
+	fmt.Fprintf(os.Stderr, "  --no-color       Disable colored output\n")
 	fmt.Fprintf(os.Stderr, "\nGeneral Flags:\n")
 	fmt.Fprintf(os.Stderr, "  --help           Show help information\n")
 	fmt.Fprintf(os.Stderr, "  --version        Show version information\n")
@@ -30,6 +31,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  CCV_VERBOSE=1    Equivalent to --verbose\n")
 	fmt.Fprintf(os.Stderr, "  CCV_QUIET=1      Equivalent to --quiet\n")
 	fmt.Fprintf(os.Stderr, "  CCV_FORMAT=json  Equivalent to --format json\n")
+	fmt.Fprintf(os.Stderr, "  NO_COLOR=1       Disable colored output (standard)\n")
 	fmt.Fprintf(os.Stderr, "\nExamples:\n")
 	fmt.Fprintf(os.Stderr, "  ccv \"Explain this codebase\"\n")
 	fmt.Fprintf(os.Stderr, "  ccv --verbose \"Debug this issue\"\n")
@@ -48,6 +50,7 @@ func main() {
 	// Read configuration from environment variables (can be overridden by flags)
 	verbose := os.Getenv("CCV_VERBOSE") == "1"
 	quiet := os.Getenv("CCV_QUIET") == "1"
+	noColor := false
 	format := strings.ToLower(os.Getenv("CCV_FORMAT"))
 	if format == "" {
 		format = "text"
@@ -74,6 +77,10 @@ func main() {
 			quiet = true
 			continue
 		}
+		if arg == "--no-color" || arg == "-no-color" {
+			noColor = true
+			continue
+		}
 		if arg == "--format" || arg == "-format" {
 			// Next arg is the format value
 			if i+1 < len(args) {
@@ -94,6 +101,11 @@ func main() {
 
 		// Pass through to claude
 		claudeArgs = append(claudeArgs, arg)
+	}
+
+	// Apply --no-color flag to color system
+	if noColor {
+		SetNoColor(true)
 	}
 
 	args = claudeArgs

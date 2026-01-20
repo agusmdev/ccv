@@ -104,6 +104,8 @@ func (p *OutputProcessor) handleSystemInit(msg *SystemInit) {
 	fmt.Fprintf(p.writer, "%s[Session started: %s]%s\n", c.SessionInfo, msg.Model, c.Reset)
 	// Show initial agent state
 	p.printAgentContext()
+	// Add spacing after session info
+	fmt.Fprintln(p.writer)
 }
 
 // handleAssistantMessage processes complete assistant messages
@@ -235,15 +237,17 @@ func (p *OutputProcessor) handleContentBlockDelta(event *StreamEvent) {
 func (p *OutputProcessor) processContentBlock(block *ContentBlock) {
 	switch block.Type {
 	case ContentBlockTypeText:
-		// Text already streamed, just ensure newline
+		// Text already streamed, just ensure newline and spacing
 		if block.Text != "" && p.mode != OutputModeQuiet {
 			fmt.Fprintln(p.writer)
+			fmt.Fprintln(p.writer) // Add extra blank line after text blocks
 		}
 
 	case ContentBlockTypeThinking:
 		if p.mode != OutputModeQuiet {
 			c := p.colors
 			fmt.Fprintf(p.writer, "%s[THINKING]%s %s%s%s\n", c.ThinkingPrefix, c.Reset, c.ThinkingText, block.Thinking, c.Reset)
+			fmt.Fprintln(p.writer) // Add spacing after thinking blocks
 		}
 
 	case ContentBlockTypeToolUse:
