@@ -1,15 +1,17 @@
 # CCV - Claude Code Viewer
 
-A lightweight TUI (Terminal User Interface) wrapper for Claude Code that renders beautiful, structured output in your terminal.
+A lightweight headless CLI wrapper for Claude Code that renders structured text output. Perfect for scripts, automation, logging, and headless environments.
 
 ## Features
 
-- **Beautiful TUI Interface**: Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss) for stunning terminal output
-- **Real-time Streaming**: Watch Claude Code's responses stream in real-time with proper formatting
-- **Tool Call Visualization**: See tool calls, results, and thinking blocks clearly structured
-- **Message Tracking**: Track assistant messages, user inputs, and system events
-- **Keyboard Navigation**: Mouse and keyboard support for interactive exploration
-- **Signal Handling**: Graceful shutdown with proper cleanup
+- **Structured Text Output**: Clean, readable output showing assistant responses, tool calls, and thinking blocks
+- **Real-time Streaming**: Claude's responses stream to stdout as they arrive
+- **Tool Call Formatting**: Tool calls and results are clearly formatted with status indicators
+- **Agent Hierarchy Display**: Shows nested agent context when Task tools spawn sub-agents
+- **Token Usage Tracking**: Displays token counts and cost information
+- **Headless Operation**: No interactive UI - perfect for scripts, CI/CD, and automation
+- **Flexible Output Modes**: Supports verbose, quiet, and JSON output formats
+- **Signal Handling**: Graceful shutdown with proper cleanup on SIGINT/SIGTERM
 
 ## Requirements
 
@@ -72,12 +74,39 @@ Use `--` to pass arguments directly to the underlying Claude Code CLI:
 ccv -- -p "Fix the bug" --allowedTools Bash,Read
 ```
 
-### Interactive Mode
+### Output Modes
 
-The TUI provides:
-- **Alt Screen**: Uses alternate screen buffer, preserving your terminal history
-- **Mouse Support**: Click and scroll through content
-- **Signal Handling**: Press `Ctrl+C` for graceful shutdown
+Control output verbosity with flags:
+
+```bash
+# Default: structured text with moderate detail
+ccv "Explain this codebase"
+
+# Verbose: include full tool inputs and parameters
+ccv --verbose "Refactor this code"
+
+# Quiet: only show assistant text responses
+ccv --quiet "What is this project?"
+
+# JSON: output parsed SDK messages as JSON
+ccv --format json "Analyze the code"
+```
+
+### Piping and Scripting
+
+CCV outputs to stdout, making it perfect for piping:
+
+```bash
+# Save output to a log file
+ccv "Analyze the code" > analysis.log
+
+# Pipe to other tools
+ccv "List all functions" | grep "export"
+
+# Use in scripts
+OUTPUT=$(ccv --quiet "What is the main entry point?")
+echo "Entry point: $OUTPUT"
+```
 
 ### Examples
 
@@ -114,17 +143,18 @@ For more Claude Code configuration options, see the [official documentation](htt
 ## How It Works
 
 CCV wraps the Claude Code CLI and:
-1. Spawns Claude Code as a subprocess with your prompt
-2. Parses the streaming JSON output from Claude Code's SDK
-3. Renders structured messages, tool calls, and results in a beautiful TUI
+1. Spawns Claude Code as a subprocess with `--output-format stream-json`
+2. Parses the streaming NDJSON output from Claude Code's SDK
+3. Formats and outputs structured text to stdout in real-time
 4. Handles signals and cleanup for graceful shutdown
 
-The TUI displays:
-- **Assistant Messages**: Claude's responses with proper formatting
-- **Tool Calls**: Function calls with parameters
-- **Tool Results**: Results from executed tools
-- **Thinking Blocks**: Claude's reasoning process
-- **User Messages**: Your inputs and system messages
+The output includes:
+- **Assistant Messages**: Claude's text responses streamed as they arrive
+- **Tool Calls**: Function calls with name, description, and status
+- **Tool Results**: Results from executed tools (indented under tool calls)
+- **Thinking Blocks**: Claude's reasoning process with `[THINKING]` prefix
+- **Agent Context**: Shows current agent type and status (e.g., `[main: running]`)
+- **Token Usage**: Token counts and cost summary at completion
 
 ## Development
 
@@ -134,7 +164,7 @@ The TUI displays:
 ccv/
 ├── main.go      # Entry point and flag handling
 ├── runner.go    # Claude Code subprocess management
-├── tui.go       # Bubble Tea UI implementation
+├── output.go    # Text output processor (TO BE CREATED)
 ├── types.go     # Message and event type definitions
 └── go.mod       # Go module dependencies
 ```
@@ -167,9 +197,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) - A powerful TUI framework
-- Styled with [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Style definitions for nice terminal layouts
 - Wraps [Claude Code](https://docs.anthropic.com/en/docs/quickstart-guide) - Anthropic's official CLI for Claude
+- Built with Go's standard library for robust subprocess management and concurrent processing
 
 ## Support
 
