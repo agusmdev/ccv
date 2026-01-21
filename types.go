@@ -147,7 +147,47 @@ type ContentBlock struct {
 	// Tool result fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
-	IsError   bool   `json:"is_error,omitempty"`
+	// RawContent stores the raw JSON when Content is an array
+	RawContent json.RawMessage `json:"-"`
+	IsError    bool            `json:"is_error,omitempty"`
+}
+
+// UnmarshalJSON handles both object and array forms for tool_result content
+func (c *ContentBlock) UnmarshalJSON(data []byte) error {
+	// Use type alias to avoid infinite recursion
+	type contentBlockAlias ContentBlock
+	var alias contentBlockAlias
+
+	// Try unmarshaling as an object first
+	if err := json.Unmarshal(data, &alias); err == nil {
+		*c = ContentBlock(alias)
+		return nil
+	}
+
+	// If that fails, check if it's an array (only for tool_result type)
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil {
+		// It's an array - store it in RawContent
+		*c = ContentBlock{
+			RawContent: data,
+		}
+		// Try to extract the type from the first array element
+		if len(arr) > 0 {
+			var firstElem map[string]json.RawMessage
+			if err := json.Unmarshal(arr[0], &firstElem); err == nil {
+				if typeBytes, ok := firstElem["type"]; ok {
+					var blockType string
+					if err := json.Unmarshal(typeBytes, &blockType); err == nil {
+						c.Type = ContentBlockType(blockType)
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	// Return the original error
+	return fmt.Errorf("cannot unmarshal ContentBlock: %w", json.Unmarshal(data, &alias))
 }
 
 // StreamEventWrapper wraps a stream event from the Claude CLI
