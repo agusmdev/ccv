@@ -2,3 +2,12 @@ claude-code-source/
 sandboxed-ralph.sh
 ccv
 dist/
+
+# macOS
+.DS_Store
+
+# Local scripts
+ralph*.sh
+
+# Beads local files
+.beads/daemon-error
