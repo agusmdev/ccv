@@ -109,26 +109,38 @@ verify_checksum() {
     local checksum_url="$2"
     local temp_checksum="/tmp/ccv_checksums.txt"
 
-    if ! command_exists sha256sum && ! command_exists shasum; then
-        warn "No checksum utility found, skipping verification"
-        return 0
-    fi
-
     info "Verifying checksum..."
     download_file "$checksum_url" "$temp_checksum"
 
-    if command_exists sha256sum; then
-        cd "$(dirname "$file")"
-        if grep "$(basename "$file")" "$temp_checksum" | sha256sum -c --status 2>/dev/null; then
+    cd "$(dirname "$file")"
+    local filename="$(basename "$file")"
+    local expected_line
+    expected_line=$(grep "$filename" "$temp_checksum" | head -1)
+
+    if [ -z "$expected_line" ]; then
+        warn "No checksum found for $filename, skipping verification"
+        rm -f "$temp_checksum"
+        return 0
+    fi
+
+    # Use shasum on macOS (BSD sha256sum doesn't support -c flag)
+    # Use sha256sum on Linux
+    if command_exists shasum; then
+        if echo "$expected_line" | shasum -a 256 -c --status 2>/dev/null; then
             success "Checksum verified"
+            rm -f "$temp_checksum"
             return 0
         fi
-    elif command_exists shasum; then
-        cd "$(dirname "$file")"
-        if grep "$(basename "$file")" "$temp_checksum" | shasum -a 256 -c --status 2>/dev/null; then
+    elif command_exists sha256sum; then
+        if echo "$expected_line" | sha256sum -c --status 2>/dev/null; then
             success "Checksum verified"
+            rm -f "$temp_checksum"
             return 0
         fi
+    else
+        warn "No checksum utility found, skipping verification"
+        rm -f "$temp_checksum"
+        return 0
     fi
 
     rm -f "$temp_checksum"
