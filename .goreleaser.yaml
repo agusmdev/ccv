@@ -22,11 +22,17 @@ builds:
     binary: ccv
 
 archives:
-  - formats:
+  - id: compressed
+    formats:
       - tar.gz
       - zip
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+  - id: binary
+    formats:
+      - binary
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
 
 checksum:
   name_template: 'checksums.txt'
