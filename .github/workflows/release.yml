@@ -13,33 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
-      - name: Build binaries
-        run: |
-          mkdir -p dist
-
-          # Build for all supported platforms
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/ccv_darwin_amd64 .
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/ccv_darwin_arm64 .
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/ccv_linux_amd64 .
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/ccv_linux_arm64 .
-
-          # Generate checksums
-          cd dist
-          sha256sum ccv_* > checksums.txt
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          files: |
-            dist/ccv_darwin_amd64
-            dist/ccv_darwin_arm64
-            dist/ccv_linux_amd64
-            dist/ccv_linux_arm64
-            dist/checksums.txt
-          generate_release_notes: true
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
