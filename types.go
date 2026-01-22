@@ -325,6 +325,26 @@ type UserMessage struct {
 	ToolUseResult   *ToolUseResult     `json:"tool_use_result,omitempty"`
 }
 
+// SessionIndex represents the sessions-index.json structure
+type SessionIndex struct {
+	Version int                  `json:"version"`
+	Entries []SessionIndexEntry  `json:"entries"`
+}
+
+// SessionIndexEntry represents an entry in the sessions-index.json
+type SessionIndexEntry struct {
+	SessionID    string `json:"sessionId"`
+	FullPath     string `json:"fullPath"`
+	FileMtime    int64  `json:"fileMtime"`
+	FirstPrompt  string `json:"firstPrompt"`
+	MessageCount int    `json:"messageCount"`
+	Created      string `json:"created"`
+	Modified     string `json:"modified"`
+	GitBranch    string `json:"gitBranch"`
+	ProjectPath  string `json:"projectPath"`
+	IsSidechain  bool   `json:"isSidechain"`
+}
+
 // ToolCall represents a tool invocation with its state
 type ToolCall struct {
 	ID        string          `json:"id"`
