@@ -147,24 +147,63 @@ type ContentBlock struct {
 	// Tool result fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
-	// RawContent stores the raw JSON when Content is an array
+	// RawContent stores the raw JSON when Content is an array or complex object
 	RawContent json.RawMessage `json:"-"`
 	IsError    bool            `json:"is_error,omitempty"`
 }
 
-// UnmarshalJSON handles both object and array forms for tool_result content
+// UnmarshalJSON handles both object and array forms for content, including arrays in the content field
 func (c *ContentBlock) UnmarshalJSON(data []byte) error {
-	// Use type alias to avoid infinite recursion
-	type contentBlockAlias ContentBlock
-	var alias contentBlockAlias
+	// First, try to extract the type field by parsing as a map
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err == nil {
+		// It's an object - extract type first
+		if typeBytes, ok := rawMap["type"]; ok {
+			var blockType string
+			if err := json.Unmarshal(typeBytes, &blockType); err == nil {
+				c.Type = ContentBlockType(blockType)
+			}
+		}
 
-	// Try unmarshaling as an object first
-	if err := json.Unmarshal(data, &alias); err == nil {
-		*c = ContentBlock(alias)
+		// Now handle each field individually to avoid type conflicts
+		if textBytes, ok := rawMap["text"]; ok {
+			json.Unmarshal(textBytes, &c.Text)
+		}
+		if thinkingBytes, ok := rawMap["thinking"]; ok {
+			json.Unmarshal(thinkingBytes, &c.Thinking)
+		}
+		if idBytes, ok := rawMap["id"]; ok {
+			json.Unmarshal(idBytes, &c.ID)
+		}
+		if nameBytes, ok := rawMap["name"]; ok {
+			json.Unmarshal(nameBytes, &c.Name)
+		}
+		if inputBytes, ok := rawMap["input"]; ok {
+			c.Input = inputBytes
+		}
+		if toolUseIDBytes, ok := rawMap["tool_use_id"]; ok {
+			json.Unmarshal(toolUseIDBytes, &c.ToolUseID)
+		}
+		if isErrorBytes, ok := rawMap["is_error"]; ok {
+			json.Unmarshal(isErrorBytes, &c.IsError)
+		}
+
+		// Handle content field - can be string, array, or object
+		if contentBytes, ok := rawMap["content"]; ok {
+			// Try as string first
+			var contentStr string
+			if err := json.Unmarshal(contentBytes, &contentStr); err == nil {
+				c.Content = contentStr
+			} else {
+				// Not a string, store as raw content
+				c.RawContent = contentBytes
+			}
+		}
+
 		return nil
 	}
 
-	// If that fails, check if it's an array (only for tool_result type)
+	// Check if it's an array (top-level array form)
 	var arr []json.RawMessage
 	if err := json.Unmarshal(data, &arr); err == nil {
 		// It's an array - store it in RawContent
@@ -186,8 +225,7 @@ func (c *ContentBlock) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Return the original error
-	return fmt.Errorf("cannot unmarshal ContentBlock: %w", json.Unmarshal(data, &alias))
+	return fmt.Errorf("cannot unmarshal ContentBlock")
 }
 
 // StreamEventWrapper wraps a stream event from the Claude CLI
