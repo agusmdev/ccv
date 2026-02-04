@@ -2,7 +2,7 @@
 
 > **Warning**: This project is under active development. APIs and output formats may change between versions. Use with caution in production scripts.
 
-A lightweight headless CLI wrapper for Claude Code that renders structured text output. Perfect for scripts, automation, logging, and headless environments.
+Renders Claude Code's streaming JSON as readable terminal output. A drop-in replacement for headless environments where the interactive TUI isn't available.
 
 <img width="777" height="692" alt="image" src="https://github.com/user-attachments/assets/77d5f72e-d546-4671-af80-dbabc78c885f" />
 
